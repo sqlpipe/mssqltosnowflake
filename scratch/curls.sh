@@ -1,0 +1,1 @@
+curl -H 'Authorization: Bearer Kn7teXpj6ujOHznF2u4dpbLiwQWyqh6p' -d '{}' localhost:9000/v1/transfers
