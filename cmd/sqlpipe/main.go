@@ -9,11 +9,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/sqlpipe/mssqltosnowflake/internal/jsonlog"
 	"github.com/sqlpipe/mssqltosnowflake/internal/vcs" // New import
-	"github.com/sqlpipe/mssqltosnowflake/pkg"
 
 	_ "github.com/lib/pq"
 )
@@ -24,7 +22,6 @@ var (
 
 type cfg struct {
 	port    int
-	token   string
 	limiter struct {
 		enabled bool
 		rps     float64
@@ -49,7 +46,6 @@ func main() {
 	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
 	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
 	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter maximum burst")
-	flag.StringVar(&cfg.token, "token", "", "Auth token")
 
 	flag.Func("cors-trusted-origins", "Trusted CORS origins (space separated)", func(val string) error {
 		cfg.cors.trustedOrigins = strings.Fields(val)
@@ -63,17 +59,6 @@ func main() {
 	if *displayVersion {
 		fmt.Printf("Version:\t%s\n", version)
 		os.Exit(0)
-	}
-
-	if utf8.RuneCountInString(cfg.token) != 32 {
-		fmt.Println("Invalid or missing auth-token value (must be exactly 32 characters). Generating random characters.")
-		randomCharacters, err := pkg.RandomCharacters(32)
-		if err != nil {
-			fmt.Println("Unable to generate random characters")
-			os.Exit(0)
-		}
-		fmt.Printf("Your auth token is: %v\n", randomCharacters)
-		cfg.token = randomCharacters
 	}
 
 	logger := jsonlog.New(os.Stdout, jsonlog.LevelInfo)

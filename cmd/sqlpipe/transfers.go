@@ -202,7 +202,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 
 	headers := make(http.Header)
 
-	err = app.writeJSON(w, http.StatusCreated, envelope{"transfer": transfer}, headers)
+	err = app.writeJSON(w, http.StatusCreated, envelope{"message": "success"}, headers)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
