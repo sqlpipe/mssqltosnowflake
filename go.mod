@@ -13,6 +13,7 @@ require (
 	github.com/lib/pq v1.10.2
 	github.com/snowflakedb/gosnowflake v1.6.13
 	github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce
+	golang.org/x/sync v0.0.0-20220907140024-f12130a52804
 	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
 )
 

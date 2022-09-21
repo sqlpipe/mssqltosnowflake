@@ -1,13 +1,20 @@
 package data
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"reflect"
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/sqlpipe/mssqltosnowflake/pkg"
+	"golang.org/x/sync/errgroup"
 )
 
 type Query struct {
@@ -27,6 +34,7 @@ type ColumnInfo struct {
 	ColumnPrecisions    []int64
 	ColumnScales        []int64
 	ColumnLengths       []int64
+	NumCols             int
 }
 
 type Transfer struct {
@@ -69,24 +77,12 @@ func (transfer Transfer) Run(ctx context.Context) error {
 
 		sourceQuery := fmt.Sprintf("select * from %v.%v", sourceSchema, sourceTable)
 		s3Path := fmt.Sprintf("%v/%v/%v/%v", transfer.AwsConfig.S3Dir, transfer.Id, targetTable, randomCharacters)
-		targetQuery := fmt.Sprintf(
-			"copy into MSSQL_%v.%v from s3://%v/%v credentials=(aws_key_id='%v' aws_secret_key='%v' %v) file_format = (format_name = %v)",
-			transfer.Source.DbName,
-			targetTable,
-			transfer.AwsConfig.S3Bucket,
-			transfer.AwsConfig.S3Dir,
-			transfer.AwsConfig.Key,
-			transfer.AwsConfig.Secret,
-			awsTokenConfig,
-			transfer.Target.FileFormatName,
-		)
 
 		query := Query{
 			Schema:      sourceSchema,
 			Table:       sourceTable,
 			SourceQuery: sourceQuery,
 			S3Path:      s3Path,
-			TargetQuery: targetQuery,
 		}
 
 		queries = append(queries, query)
@@ -120,69 +116,152 @@ func (transfer Transfer) Run(ctx context.Context) error {
 		return err
 	}
 
-	for i, table := range transfer.Queries {
+	g, ctx := errgroup.WithContext(ctx)
 
-		transferRows, err := transfer.Source.Db.Query(table.SourceQuery)
-		if err != nil {
-			return err
-		}
+	g.SetLimit(10)
 
-		columnInfo := ColumnInfo{
-			ColumnNames:         []string{},
-			ColumnDbTypes:       []string{},
-			ColumnScanTypes:     []reflect.Type{},
-			ColumnNamesAndTypes: []string{},
-			ColumnPrecisions:    []int64{},
-			ColumnScales:        []int64{},
-			ColumnLengths:       []int64{},
-		}
+	for outerLoopI, outerLoopTable := range transfer.Queries {
 
-		colTypesFromDriver, err := transferRows.ColumnTypes()
-		if err != nil {
-			return err
-		}
+		i := outerLoopI
+		table := outerLoopTable
+		g.Go(func() error {
 
-		for _, colType := range colTypesFromDriver {
-			columnInfo.ColumnNames = append(columnInfo.ColumnNames, colType.Name())
-			columnInfo.ColumnDbTypes = append(columnInfo.ColumnDbTypes, colType.DatabaseTypeName())
-			columnInfo.ColumnScanTypes = append(columnInfo.ColumnScanTypes, colType.ScanType())
+			transferRows, err := transfer.Source.Db.Query(table.SourceQuery)
+			if err != nil {
+				return err
+			}
 
-			colLen, _ := colType.Length()
-			columnInfo.ColumnLengths = append(columnInfo.ColumnLengths, colLen)
+			columnInfo := ColumnInfo{
+				ColumnNames:         []string{},
+				ColumnDbTypes:       []string{},
+				ColumnScanTypes:     []reflect.Type{},
+				ColumnNamesAndTypes: []string{},
+				ColumnPrecisions:    []int64{},
+				ColumnScales:        []int64{},
+				ColumnLengths:       []int64{},
+			}
 
-			precision, scale, _ := colType.DecimalSize()
-			columnInfo.ColumnPrecisions = append(columnInfo.ColumnPrecisions, precision)
-			columnInfo.ColumnScales = append(columnInfo.ColumnScales, scale)
-		}
+			colTypesFromDriver, err := transferRows.ColumnTypes()
+			if err != nil {
+				return err
+			}
 
-		columnInfo, err = getCreateTableTypes(columnInfo)
-		if err != nil {
-			return err
-		}
+			for _, colType := range colTypesFromDriver {
+				columnInfo.ColumnNames = append(columnInfo.ColumnNames, colType.Name())
+				columnInfo.ColumnDbTypes = append(columnInfo.ColumnDbTypes, colType.DatabaseTypeName())
+				columnInfo.ColumnScanTypes = append(columnInfo.ColumnScanTypes, colType.ScanType())
 
-		query := fmt.Sprintf("create table MSSQL_%v.%v_%v (", transfer.Source.DbName, table.Schema, table.Table)
+				colLen, _ := colType.Length()
+				columnInfo.ColumnLengths = append(columnInfo.ColumnLengths, colLen)
 
-		for _, colNameAndType := range columnInfo.ColumnNamesAndTypes {
-			query = query + fmt.Sprintf("%v, ", colNameAndType)
-		}
+				precision, scale, _ := colType.DecimalSize()
+				columnInfo.ColumnPrecisions = append(columnInfo.ColumnPrecisions, precision)
+				columnInfo.ColumnScales = append(columnInfo.ColumnScales, scale)
+			}
 
-		query = strings.TrimSuffix(query, ", ")
-		query = query + ");"
-		transfer.Queries[i].TargetCreateTableQuery = query
+			columnInfo.NumCols = len(columnInfo.ColumnNames)
 
-		_, err = transfer.Target.Db.ExecContext(
-			ctx,
-			query,
-		)
-		if err != nil {
-			return err
-		}
+			columnInfo, err = getCreateTableTypes(columnInfo)
+			if err != nil {
+				return err
+			}
 
-		transferRows.Close()
+			query := fmt.Sprintf("create table MSSQL_%v.%v_%v (", transfer.Source.DbName, table.Schema, table.Table)
+
+			for _, colNameAndType := range columnInfo.ColumnNamesAndTypes {
+				query = query + fmt.Sprintf("%v, ", colNameAndType)
+			}
+
+			query = strings.TrimSuffix(query, ", ")
+			query = query + ");"
+			transfer.Queries[i].TargetCreateTableQuery = query
+
+			_, err = transfer.Target.Db.ExecContext(
+				ctx,
+				query,
+			)
+			if err != nil {
+				return err
+			}
+
+			numCols := columnInfo.NumCols
+			zeroIndexedNumCols := numCols - 1
+
+			var fileBuilder strings.Builder
+			defer fileBuilder.Reset()
+
+			vals := make([]interface{}, numCols)
+			valPtrs := make([]interface{}, numCols)
+			dataInRam := false
+
+			for i := 0; i < numCols; i++ {
+				valPtrs[i] = &vals[i]
+			}
+
+			for i := 1; transferRows.Next(); i++ {
+				transferRows.Scan(valPtrs...)
+
+				// while in the middle of insert row, add commas at end of values
+				for j := 0; j < zeroIndexedNumCols; j++ {
+					turboWritersMid[columnInfo.ColumnDbTypes[j]](vals[j], &fileBuilder)
+				}
+
+				// end of row doesn't need a comma at the end
+				turboWritersEnd[columnInfo.ColumnDbTypes[zeroIndexedNumCols]](vals[zeroIndexedNumCols], &fileBuilder)
+				dataInRam = true
+
+				// each dsConn has its own limits on insert statements (either on total
+				// length or number of rows)
+
+				if turboInsertChecker(fileBuilder.Len(), i) {
+					reader, err := getGzipReader(turboEndStringNilReplacer.Replace(fileBuilder.String()))
+					if err != nil {
+						return err
+					}
+					err = uploadAndTransfer(reader, &transfer.AwsConfig.Uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+					if err != nil {
+						return err
+					}
+					dataInRam = false
+					fileBuilder.Reset()
+				}
+			}
+
+			if dataInRam {
+				reader, err := getGzipReader(turboEndStringNilReplacer.Replace(fileBuilder.String()))
+				if err != nil {
+					return err
+				}
+				err = uploadAndTransfer(reader, &transfer.AwsConfig.Uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+				if err != nil {
+					return err
+				}
+			}
+
+			loadingQuery := fmt.Sprintf(
+				"copy into %v.%v from s3://%v/%v credentials=(aws_key_id='%v' aws_secret_key='%v' aws_token='%v') file_format = (format_name = sqlpipe_csv)",
+				fmt.Sprintf("MSSQL_%v", transfer.Source.DbName),
+				fmt.Sprintf("%v_%v", table.Schema, table.Table),
+				transfer.AwsConfig.S3Bucket,
+				fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, table.Table),
+				transfer.AwsConfig.Key,
+				transfer.AwsConfig.Secret,
+				awsTokenConfig,
+			)
+
+			_, err = transfer.Target.Db.ExecContext(ctx, loadingQuery)
+			if err != nil {
+				return err
+			}
+
+			return nil
+		})
 	}
 
-	// transferJsonBytes, _ := json.Marshal(transfer)
-	// fmt.Println(string(transferJsonBytes))
+	err = g.Wait()
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -292,4 +371,300 @@ func getCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 	}
 
 	return columnInfo, nil
+}
+
+func turboWriteMidVal(valType string, value interface{}, builder *strings.Builder) {
+	turboWritersMid[valType](value, builder)
+}
+
+func turboWriteEndVal(valType string, value interface{}, builder *strings.Builder) {
+	turboWritersEnd[valType](value, builder)
+}
+
+var generalReplacer = strings.NewReplacer(`"`, `""`, "\n", "")
+var turboEndStringNilReplacer = strings.NewReplacer(
+	`"%!s(<nil>)"`, "",
+	`%!s(<nil>)`, "",
+	`%!x(<nil>)`, "",
+	`%!d(<nil>)`, "",
+	`%!t(<nil>)`, "",
+	`%!v(<nil>)`, "",
+	`%!g(<nil>)`, "",
+)
+
+var sqlEndStringNilReplacer = strings.NewReplacer(
+	`'%!s(<nil>)'`, "null",
+	`%!s(<nil>)`, "null",
+	`%!d(<nil>)`, "null",
+	`%!t(<nil>)`, "null",
+	`'%!v(<nil>)'`, "null",
+	`%!g(<nil>)`, "null",
+	`'\x%!x(<nil>)'`, "null",
+	`x'%!x(<nil>)'`, "null",
+	`CONVERT(VARBINARY(8000), '0x%!x(<nil>)', 1)`, "null",
+	`hextoraw('%!x(<nil>)')`, "null",
+	`to_binary('%!x(<nil>)')`, "null",
+	`'%!x(<nil>)'`, "null",
+	`'%!b(<nil>)'`, "null",
+	"'<nil>'", "null",
+	"<nil>", "null",
+)
+
+var turboWritersMid = map[string]func(value interface{}, builder *strings.Builder){
+
+	// Generics
+	"bool":    writeBoolMidTurbo,
+	"float32": writeFloatMidTurbo,
+	"float64": writeFloatMidTurbo,
+	"int16":   writeIntMidTurbo,
+	"int32":   writeIntMidTurbo,
+	"int64":   writeIntMidTurbo,
+	"Time":    snowflakeWriteTimestampFromTimeMidTurbo,
+
+	// MSSQL
+
+	"BIGINT":           writeIntMidTurbo,
+	"BIT":              writeBoolMidTurbo,
+	"DECIMAL":          writeStringNoQuotesMidTurbo,
+	"INT":              writeIntMidTurbo,
+	"MONEY":            writeQuotedStringMidTurbo,
+	"SMALLINT":         writeIntMidTurbo,
+	"SMALLMONEY":       writeQuotedStringMidTurbo,
+	"TINYINT":          writeIntMidTurbo,
+	"FLOAT":            writeFloatMidTurbo,
+	"REAL":             writeFloatMidTurbo,
+	"DATE":             snowflakeWriteTimestampFromTimeMidTurbo,
+	"DATETIME2":        snowflakeWriteTimestampFromTimeMidTurbo,
+	"DATETIME":         snowflakeWriteTimestampFromTimeMidTurbo,
+	"DATETIMEOFFSET":   snowflakeWriteTimestampFromTimeMidTurbo,
+	"SMALLDATETIME":    snowflakeWriteTimestampFromTimeMidTurbo,
+	"TIME":             snowflakeWriteTimestampFromTimeMidTurbo,
+	"CHAR":             writeEscapedQuotedStringMidTurbo,
+	"VARCHAR":          writeEscapedQuotedStringMidTurbo,
+	"TEXT":             writeEscapedQuotedStringMidTurbo,
+	"NCHAR":            writeEscapedQuotedStringMidTurbo,
+	"NVARCHAR":         writeEscapedQuotedStringMidTurbo,
+	"NTEXT":            writeEscapedQuotedStringMidTurbo,
+	"BINARY":           snowflakeWriteBinaryfromBytesMidTurbo,
+	"VARBINARY":        snowflakeWriteBinaryfromBytesMidTurbo,
+	"UNIQUEIDENTIFIER": writeMSSQLUniqueIdentifierMidTurbo,
+	"XML":              writeEscapedQuotedStringMidTurbo,
+	"IMAGE":            snowflakeWriteBinaryfromBytesMidTurbo,
+}
+
+var turboWritersEnd = map[string]func(value interface{}, builder *strings.Builder){
+
+	// Generics
+	"bool":    writeBoolEndTurbo,
+	"float32": writeFloatEndTurbo,
+	"float64": writeFloatEndTurbo,
+	"int16":   writeIntEndTurbo,
+	"int32":   writeIntEndTurbo,
+	"int64":   writeIntEndTurbo,
+	"Time":    snowflakeWriteTimestampFromTimeEndTurbo,
+
+	// MSSQL
+
+	"BIGINT":           writeIntEndTurbo,
+	"BIT":              writeBoolEndTurbo,
+	"DECIMAL":          writeStringNoQuotesEndTurbo,
+	"INT":              writeIntEndTurbo,
+	"MONEY":            writeQuotedStringEndTurbo,
+	"SMALLINT":         writeIntEndTurbo,
+	"SMALLMONEY":       writeQuotedStringEndTurbo,
+	"TINYINT":          writeIntEndTurbo,
+	"FLOAT":            writeFloatEndTurbo,
+	"REAL":             writeFloatEndTurbo,
+	"DATE":             snowflakeWriteTimestampFromTimeEndTurbo,
+	"DATETIME2":        snowflakeWriteTimestampFromTimeEndTurbo,
+	"DATETIME":         snowflakeWriteTimestampFromTimeEndTurbo,
+	"DATETIMEOFFSET":   snowflakeWriteTimestampFromTimeEndTurbo,
+	"SMALLDATETIME":    snowflakeWriteTimestampFromTimeEndTurbo,
+	"TIME":             snowflakeWriteTimestampFromTimeEndTurbo,
+	"CHAR":             writeEscapedQuotedStringEndTurbo,
+	"VARCHAR":          writeEscapedQuotedStringEndTurbo,
+	"TEXT":             writeEscapedQuotedStringEndTurbo,
+	"NCHAR":            writeEscapedQuotedStringEndTurbo,
+	"NVARCHAR":         writeEscapedQuotedStringEndTurbo,
+	"NTEXT":            writeEscapedQuotedStringEndTurbo,
+	"BINARY":           snowflakeWriteBinaryfromBytesEndTurbo,
+	"VARBINARY":        snowflakeWriteBinaryfromBytesEndTurbo,
+	"UNIQUEIDENTIFIER": writeMSSQLUniqueIdentifierEndTurbo,
+	"XML":              writeEscapedQuotedStringEndTurbo,
+	"IMAGE":            snowflakeWriteBinaryfromBytesEndTurbo,
+}
+
+func writeBoolMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%t,", value)
+}
+func writeBoolEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%t\n", value)
+}
+
+func writeFloatMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%g,", value)
+}
+func writeFloatEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%g\n", value)
+}
+
+func writeIntMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%d,", value)
+}
+
+func writeIntEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%d\n", value)
+}
+
+var snowflakeTimeFormat = "2006-01-02 15:04:05.000000"
+
+func snowflakeWriteTimestampFromTimeMidTurbo(value interface{}, builder *strings.Builder) {
+	switch value := value.(type) {
+	case time.Time:
+		fmt.Fprintf(builder, `%s,`, value.Format(snowflakeTimeFormat))
+	default:
+		builder.WriteString(",")
+	}
+}
+
+func snowflakeWriteTimestampFromTimeEndTurbo(value interface{}, builder *strings.Builder) {
+	switch value := value.(type) {
+	case time.Time:
+		fmt.Fprintf(builder, "%s\n", value.Format(snowflakeTimeFormat))
+	default:
+		builder.WriteString("\n")
+	}
+}
+
+func writeStringNoQuotesMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, `%s,`, value)
+}
+
+func writeStringNoQuotesEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%s\n", value)
+}
+
+func writeQuotedStringMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, `"%s",`, value)
+}
+
+func writeQuotedStringEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "\"%s\"\n", value)
+}
+
+func writeEscapedQuotedStringMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, `"%s",`, generalReplacer.Replace(fmt.Sprintf("%s", value)))
+}
+
+func writeEscapedQuotedStringEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "\"%s\"\n", generalReplacer.Replace(fmt.Sprintf("%s", value)))
+}
+
+func snowflakeWriteBinaryfromBytesMidTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%x,", value)
+}
+
+func snowflakeWriteBinaryfromBytesEndTurbo(value interface{}, builder *strings.Builder) {
+	fmt.Fprintf(builder, "%x\n", value)
+}
+
+func writeMSSQLUniqueIdentifierMidTurbo(value interface{}, builder *strings.Builder) {
+	// This is a really stupid fix but it works
+	// https://github.com/denisenkom/go-mssqldb/issues/56
+	// I guess the bits get shifted around in the first half of these bytes... whatever
+	switch value := value.(type) {
+	case []uint8:
+		fmt.Fprintf(
+			builder,
+			"%X%X%X%X%X%X%X%X%X%X%X,",
+			value[3],
+			value[2],
+			value[1],
+			value[0],
+			value[5],
+			value[4],
+			value[7],
+			value[6],
+			value[8],
+			value[9],
+			value[10:],
+		)
+	default:
+		builder.WriteString(",")
+	}
+}
+
+func writeMSSQLUniqueIdentifierEndTurbo(value interface{}, builder *strings.Builder) {
+	// This is a really stupid fix but it works
+	// https://github.com/denisenkom/go-mssqldb/issues/56
+	// I guess the bits get shifted around in the first half of these bytes... whatever
+	switch value := value.(type) {
+	case []uint8:
+		fmt.Fprintf(
+			builder,
+			"%X%X%X%X%X%X%X%X%X%X%X\n",
+			value[3],
+			value[2],
+			value[1],
+			value[0],
+			value[5],
+			value[4],
+			value[7],
+			value[6],
+			value[8],
+			value[9],
+			value[10:],
+		)
+	default:
+		builder.WriteString("\n")
+	}
+}
+
+func turboInsertChecker(currentLen int, currentRow int) bool {
+	if currentLen%100000 == 0 {
+		return true
+	} else {
+		return false
+	}
+}
+
+func getGzipReader(contents string) (zr io.Reader, err error) {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+
+	_, err = zw.Write([]byte(contents))
+	if err != nil {
+		return
+	}
+
+	if err = zw.Close(); err != nil {
+		return
+	}
+
+	return gzip.NewReader(&buf)
+}
+
+func uploadAndTransfer(
+	reader io.Reader,
+	uploader *manager.Uploader,
+	tableName string,
+	transferId string,
+	s3Dir string,
+	s3Bucket string,
+) error {
+
+	randomChars, err := pkg.RandomCharacters(32)
+	if err != nil {
+		return err
+	}
+
+	s3Path := fmt.Sprintf("%v/%v/%v/%v", s3Dir, transferId, tableName, randomChars)
+
+	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
+		Bucket: &s3Bucket,
+		Key:    aws.String(s3Path),
+		Body:   reader,
+	})
+
+	return err
 }
