@@ -3,6 +3,7 @@ module github.com/sqlpipe/mssqltosnowflake
 go 1.18
 
 require (
+	github.com/aws/aws-sdk-go-v2 v1.16.15
 	github.com/aws/aws-sdk-go-v2/config v1.17.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.12.19
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.11.32
@@ -21,7 +22,6 @@ require (
 	github.com/Azure/azure-pipeline-go v0.2.3 // indirect
 	github.com/Azure/azure-storage-blob-go v0.14.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.16.15 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.8 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.16 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.22 // indirect
