@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/snowflakedb/gosnowflake"
 
@@ -94,9 +92,6 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	query := url.Values{}
 	query.Add("database", source.DbName)
 
@@ -123,7 +118,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 	)
 
 	awsClientCfg, err := config.LoadDefaultConfig(
-		ctx,
+		r.Context(),
 		config.WithRegion(awsConfig.Region),
 		config.WithCredentialsProvider(creds),
 	)
@@ -200,7 +195,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		AwsConfig: awsConfig,
 	}
 
-	err = transfer.Run(ctx)
+	err = transfer.Run(r.Context())
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 	}
