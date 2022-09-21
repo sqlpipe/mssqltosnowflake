@@ -43,9 +43,9 @@ func main() {
 
 	flag.IntVar(&cfg.port, "port", 9000, "API server port")
 
-	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
-	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
-	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter maximum burst")
+	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", false, "Enable rate limiter")
+	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 100, "Rate limiter maximum requests per second")
+	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 200, "Rate limiter maximum burst")
 
 	flag.Func("cors-trusted-origins", "Trusted CORS origins (space separated)", func(val string) error {
 		cfg.cors.trustedOrigins = strings.Fields(val)

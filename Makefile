@@ -19,6 +19,7 @@ vendor:
 build/sqlpipe:
 	@echo 'Building cmd/sqlpipe...'
 	go build -ldflags="-s" -o=./bin/sqlpipe ./cmd/sqlpipe
+	sudo cp ./bin/sqlpipe /usr/bin
 
 ## transfer: run a sample transfer
 .PHONY: transfer
