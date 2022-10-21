@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/csv"
 	"fmt"
 	"io"
 	"reflect"
@@ -51,14 +52,14 @@ func (transfer Transfer) Run(ctx context.Context) error {
 		"SELECT S.name as schema_name, T.name as table_name FROM sys.tables AS T INNER JOIN sys.schemas AS S ON S.schema_id = T.schema_id LEFT JOIN sys.extended_properties AS EP ON EP.major_id = T.[object_id] WHERE T.is_ms_shipped = 0 AND (EP.class_desc IS NULL OR (EP.class_desc <>'OBJECT_OR_COLUMN' AND EP.[name] <> 'microsoft_database_tools_support'))",
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("error running query getting all db objects: %v", err)
 	}
 	defer schemaRows.Close()
 
-	awsTokenConfig := ""
-	if transfer.AwsConfig.Token != "" {
-		awsTokenConfig = fmt.Sprintf("aws_token='%v'", transfer.AwsConfig.Token)
-	}
+	// awsTokenConfig := ""
+	// if transfer.AwsConfig.Token != "" {
+	// 	awsTokenConfig = fmt.Sprintf("aws_token='%v'", transfer.AwsConfig.Token)
+	// }
 
 	var sourceSchema string
 	var sourceTable string
@@ -66,13 +67,13 @@ func (transfer Transfer) Run(ctx context.Context) error {
 	for schemaRows.Next() {
 		err := schemaRows.Scan(&sourceSchema, &sourceTable)
 		if err != nil {
-			return err
+			return fmt.Errorf("error scanning schema and table into query object: %v", err)
 		}
 
 		targetTable := fmt.Sprintf("%v_%v", sourceSchema, sourceTable)
 		randomCharacters, err := pkg.RandomCharacters(32)
 		if err != nil {
-			return err
+			return fmt.Errorf("error generating random characters: %v", err)
 		}
 
 		sourceQuery := fmt.Sprintf("select * from %v.%v", sourceSchema, sourceTable)
@@ -89,31 +90,33 @@ func (transfer Transfer) Run(ctx context.Context) error {
 	}
 	err = schemaRows.Err()
 	if err != nil {
-		return err
+		return fmt.Errorf("error iterating over schemaRows: %v", err)
 	}
 
 	transfer.Queries = queries
 
+	dropSchemaQuery := fmt.Sprintf(
+		"drop schema if exists MSSQL_%v",
+		transfer.Source.DbName,
+	)
 	_, err = transfer.Target.Db.ExecContext(
 		ctx,
-		fmt.Sprintf(
-			"drop schema if exists MSSQL_%v",
-			transfer.Source.DbName,
-		),
+		dropSchemaQuery,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("error running drop schema query, query was %v. error was: %v", dropSchemaQuery, err)
 	}
 
+	createSchemaQuery := fmt.Sprintf(
+		"create schema MSSQL_%v",
+		transfer.Source.DbName,
+	)
 	_, err = transfer.Target.Db.ExecContext(
 		ctx,
-		fmt.Sprintf(
-			"create schema MSSQL_%v",
-			transfer.Source.DbName,
-		),
+		createSchemaQuery,
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("error running create schema query, query was %v. error was: %v", createSchemaQuery, err)
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -128,7 +131,7 @@ func (transfer Transfer) Run(ctx context.Context) error {
 
 			transferRows, err := transfer.Source.Db.Query(table.SourceQuery)
 			if err != nil {
-				return err
+				return fmt.Errorf("error running extraction query: %v", err)
 			}
 
 			columnInfo := ColumnInfo{
@@ -143,7 +146,7 @@ func (transfer Transfer) Run(ctx context.Context) error {
 
 			colTypesFromDriver, err := transferRows.ColumnTypes()
 			if err != nil {
-				return err
+				return fmt.Errorf("error getting column types: %v", err)
 			}
 
 			for _, colType := range colTypesFromDriver {
@@ -163,33 +166,36 @@ func (transfer Transfer) Run(ctx context.Context) error {
 
 			columnInfo, err = getCreateTableTypes(columnInfo)
 			if err != nil {
-				return err
+				return fmt.Errorf("error getting create table types: %v", err)
 			}
 
-			query := fmt.Sprintf("create table MSSQL_%v.%v_%v (", transfer.Source.DbName, table.Schema, table.Table)
+			// table.Schema = strings.ReplaceAll(table.Schema, " ", "_")
+			// table.Table = strings.ReplaceAll(table.Schema, " ", "_")
+			createTablequery := fmt.Sprintf("create table MSSQL_%v.%v_%v (", transfer.Source.DbName, table.Schema, table.Table)
 
 			for _, colNameAndType := range columnInfo.ColumnNamesAndTypes {
-				query = query + fmt.Sprintf("%v, ", colNameAndType)
+				createTablequery = createTablequery + fmt.Sprintf("%v, ", colNameAndType)
 			}
 
-			query = strings.TrimSuffix(query, ", ")
-			query = query + ");"
-			transfer.Queries[i].TargetCreateTableQuery = query
+			createTablequery = strings.TrimSuffix(createTablequery, ", ")
+			createTablequery = createTablequery + ");"
+			transfer.Queries[i].TargetCreateTableQuery = createTablequery
 
 			_, err = transfer.Target.Db.ExecContext(
 				ctx,
-				query,
+				createTablequery,
 			)
 			if err != nil {
-				return err
+				return fmt.Errorf("error running create table query, query was %v. error was: %v", createTablequery, err)
 			}
 
 			numCols := columnInfo.NumCols
-			zeroIndexedNumCols := numCols - 1
+			// zeroIndexedNumCols := numCols - 1
 
-			var fileBuilder strings.Builder
-			defer fileBuilder.Reset()
+			var stringBuilder strings.Builder
+			csvWriter := csv.NewWriter(&stringBuilder)
 
+			colDbTypes := columnInfo.ColumnDbTypes
 			vals := make([]interface{}, numCols)
 			valPtrs := make([]interface{}, numCols)
 			dataInRam := false
@@ -198,60 +204,74 @@ func (transfer Transfer) Run(ctx context.Context) error {
 				valPtrs[i] = &vals[i]
 			}
 
+			rowVals := make([]string, numCols)
 			for i := 1; transferRows.Next(); i++ {
 				transferRows.Scan(valPtrs...)
-
-				// while in the middle of insert row, add commas at end of values
-				for j := 0; j < zeroIndexedNumCols; j++ {
-					turboWritersMid[columnInfo.ColumnDbTypes[j]](vals[j], &fileBuilder)
+				for j := 0; j < numCols; j++ {
+					rowVals[j], err = formatters[colDbTypes[j]](vals[j])
+					if err != nil {
+						return fmt.Errorf("error formatting values for csv file: %v", err)
+					}
+				}
+				err = csvWriter.Write(rowVals)
+				if err != nil {
+					return fmt.Errorf("error writing values to csv file: %v", err)
 				}
 
+				// while in the middle of insert row, add commas at end of values
+				// for j := 0; j < zeroIndexedNumCols; j++ {
+				// 	turboWritersMid[columnInfo.ColumnDbTypes[j]](vals[j], &fileBuilder)
+				// }
+
 				// end of row doesn't need a comma at the end
-				turboWritersEnd[columnInfo.ColumnDbTypes[zeroIndexedNumCols]](vals[zeroIndexedNumCols], &fileBuilder)
+				// turboWritersEnd[columnInfo.ColumnDbTypes[zeroIndexedNumCols]](vals[zeroIndexedNumCols], &fileBuilder)
 				dataInRam = true
 
 				// each dsConn has its own limits on insert statements (either on total
 				// length or number of rows)
 
-				if turboInsertChecker(fileBuilder.Len(), i) {
-					reader, err := getGzipReader(turboEndStringNilReplacer.Replace(fileBuilder.String()))
+				if turboInsertChecker(stringBuilder.Len()) {
+					csvWriter.Flush()
+					reader, err := getGzipReader(stringBuilder.String())
 					if err != nil {
-						return err
+						return fmt.Errorf("error getting gzip reader: %v", err)
 					}
 					err = uploadAndTransfer(reader, &transfer.AwsConfig.Uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
 					if err != nil {
-						return err
+						return fmt.Errorf("error running upload and transfer: %v", err)
 					}
 					dataInRam = false
-					fileBuilder.Reset()
+					stringBuilder.Reset()
 				}
 			}
 
 			if dataInRam {
-				reader, err := getGzipReader(turboEndStringNilReplacer.Replace(fileBuilder.String()))
+				csvWriter.Flush()
+				reader, err := getGzipReader(stringBuilder.String())
 				if err != nil {
-					return err
+					return fmt.Errorf("error getting gzip reader: %v", err)
 				}
 				err = uploadAndTransfer(reader, &transfer.AwsConfig.Uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
 				if err != nil {
-					return err
+					return fmt.Errorf("error running upload and transfer: %v", err)
 				}
 			}
 
 			loadingQuery := fmt.Sprintf(
-				"copy into %v.%v from s3://%v/%v credentials=(aws_key_id='%v' aws_secret_key='%v' aws_token='%v') file_format = (format_name = sqlpipe_csv)",
+				"copy into %v.%v from s3://%v/%v credentials=(aws_key_id='%v' aws_secret_key='%v' aws_token='%v') file_format = (format_name = %v)",
 				fmt.Sprintf("MSSQL_%v", transfer.Source.DbName),
 				fmt.Sprintf("%v_%v", table.Schema, table.Table),
 				transfer.AwsConfig.S3Bucket,
 				fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, table.Table),
 				transfer.AwsConfig.Key,
 				transfer.AwsConfig.Secret,
-				awsTokenConfig,
+				transfer.AwsConfig.Token,
+				transfer.Target.FileFormatName,
 			)
 
 			_, err = transfer.Target.Db.ExecContext(ctx, loadingQuery)
 			if err != nil {
-				return err
+				return fmt.Errorf("error running copy command, query was %v, error was %v", loadingQuery, err)
 			}
 
 			return nil
@@ -317,7 +337,7 @@ func getCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 			case "DATETIME":
 				createType = "TIMESTAMP"
 			case "DATETIMEOFFSET":
-				createType = "TIMESTAMP_TZ"
+				createType = "TIMESTAMP"
 			case "SMALLDATETIME":
 				createType = "TIMESTAMP"
 			case "TIME":
@@ -337,31 +357,17 @@ func getCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 			case "IMAGE":
 				createType = "BINARY"
 			case "DECIMAL":
-				createType = fmt.Sprintf(
-					"NUMBER(%d,%d)",
-					columnInfo.ColumnPrecisions[colNum],
-					columnInfo.ColumnScales[colNum],
-				)
+				createType = "FLOAT"
 			case "CHAR":
-				createType = fmt.Sprintf(
-					"CHAR(%d)",
-					columnInfo.ColumnLengths[colNum],
-				)
+				createType = "VARCHAR"
 			case "VARCHAR":
-				createType = fmt.Sprintf(
-					"VARCHAR(%d)",
-					columnInfo.ColumnLengths[colNum],
-				)
+				createType = "VARCHAR"
 			case "NCHAR":
-				createType = fmt.Sprintf(
-					"CHAR(%d)",
-					columnInfo.ColumnLengths[colNum],
-				)
+				createType = "VARCHAR"
 			case "NVARCHAR":
-				createType = fmt.Sprintf(
-					"VARCHAR(%d)",
-					columnInfo.ColumnLengths[colNum],
-				)
+				createType = "VARCHAR"
+			case "SQL_VARIANT":
+				createType = "TEXT"
 			default:
 				createType = "TEXT"
 			}
@@ -620,8 +626,10 @@ func writeMSSQLUniqueIdentifierEndTurbo(value interface{}, builder *strings.Buil
 	}
 }
 
-func turboInsertChecker(currentLen int, currentRow int) bool {
-	if currentLen%100000 == 0 {
+func turboInsertChecker(currentLen int) bool {
+	if currentLen == 0 {
+		return false
+	} else if currentLen%100000 == 0 {
 		return true
 	} else {
 		return false

@@ -198,11 +198,12 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 	err = transfer.Run(r.Context())
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
+		return
 	}
 
 	headers := make(http.Header)
 
-	err = app.writeJSON(w, http.StatusCreated, envelope{"message": "success"}, headers)
+	err = app.writeJSON(w, http.StatusOK, envelope{"message": "success"}, headers)
 	if err != nil {
 		app.serverErrorResponse(w, r, err)
 		return
