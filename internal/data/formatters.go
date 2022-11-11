@@ -20,7 +20,7 @@ var formatters = map[string]func(value interface{}) (string, error){
 	"DECIMAL":          csvCastToBytesCastToString,
 	"MONEY":            csvCastToBytesCastToString,
 	"SMALLMONEY":       csvCastToBytesCastToString,
-	"DATE":             csvCastToTimeFormatToDateString,
+	"DATE":             csvCastToTimeFormatToTimetampString,
 	"DATETIMEOFFSET":   csvCastToTimeFormatToTimetampString,
 	"SMALLDATETIME":    csvCastToTimeFormatToTimetampString,
 	"TIME":             csvCastToTimeFormatToTimeString,
@@ -33,8 +33,10 @@ var formatters = map[string]func(value interface{}) (string, error){
 	"BINARY":           csvCastToBytesCastToHexString,
 	"VARBINARY":        csvCastToBytesCastToHexString,
 	"UNIQUEIDENTIFIER": csvCastToBytesWriteMssqlUniqueIdentifier,
-	"SQL_VARIANT":      csvCastToBytesCastToString,
+	"SQL_VARIANT":      csvPrintRaw,
 	"XML":              csvPrintRaw,
+	"IMAGE":            csvCastToBytesCastToHexString,
+	"GEOMETRY":         csvCastToBytesCastToHexString,
 }
 
 func csvPrintRaw(value interface{}) (string, error) {
@@ -57,16 +59,12 @@ func csvCastToBoolWriteBinaryEquivalent(value interface{}) (string, error) {
 		return ``, errors.New(`castToBool unable to cast value to bool`)
 	}
 
-	var valToReturn string
-
 	switch valBool {
 	case true:
-		valToReturn = "1"
-	case false:
-		valToReturn = "0"
+		return "1", nil
+	default:
+		return "0", nil
 	}
-
-	return valToReturn, nil
 }
 
 func csvCastToBytesCastToHexString(value interface{}) (string, error) {
@@ -121,17 +119,6 @@ func csvCastToBytesWriteMssqlUniqueIdentifier(value interface{}) (string, error)
 		valBytes[9],
 		valBytes[10:],
 	), nil
-}
-
-func csvCastToTimeFormatToDateString(value interface{}) (string, error) {
-	if value == nil {
-		return "", nil
-	}
-	valTime, ok := value.(time.Time)
-	if !ok {
-		return ``, errors.New(`castToTimeFormatToDateString unable to cast value to bytes`)
-	}
-	return fmt.Sprintf(`%v`, valTime.Format(`2006/01/02`)), nil
 }
 
 func csvCastToTimeFormatToTimeString(value interface{}) (string, error) {

@@ -5,17 +5,13 @@ go 1.18
 require (
 	github.com/aws/aws-sdk-go-v2 v1.16.15
 	github.com/aws/aws-sdk-go-v2/config v1.17.6
-	github.com/aws/aws-sdk-go-v2/credentials v1.12.19
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.11.32
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.27.10
-	github.com/denisenkom/go-mssqldb v0.12.2
-	github.com/felixge/httpsnoop v1.0.2
+	github.com/denisenkom/go-mssqldb v0.12.3
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/lib/pq v1.10.2
 	github.com/snowflakedb/gosnowflake v1.6.13
-	github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce
-	golang.org/x/sync v0.0.0-20220907140024-f12130a52804
-	golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
+	golang.org/x/sync v0.1.0
 )
 
 require (
@@ -23,6 +19,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.14.0 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.4.8 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.12.19 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.16 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.4.16 // indirect
@@ -48,7 +45,7 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.11 // indirect
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	golang.org/x/crypto v0.0.0-20211117183948-ae814b36b871 // indirect
+	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
 	golang.org/x/net v0.0.0-20211118161319-6a13c67c3ce4 // indirect
 	golang.org/x/sys v0.0.0-20211117180635-dee7805ff2e1 // indirect
 	golang.org/x/text v0.3.7 // indirect

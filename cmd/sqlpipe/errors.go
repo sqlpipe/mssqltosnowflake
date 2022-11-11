@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -14,19 +15,15 @@ func (app *application) logError(r *http.Request, err error) {
 }
 
 func (app *application) errorResponse(w http.ResponseWriter, r *http.Request, status int, message interface{}) {
-	env := envelope{"error": message, "trace": string(debug.Stack())}
+	env := envelope{"error": message, "stack": string(debug.Stack())}
+
+	app.logError(r, errors.New(fmt.Sprint(message)))
 
 	err := app.writeJSON(w, status, env, nil)
 	if err != nil {
 		app.logError(r, err)
 		w.WriteHeader(500)
 	}
-}
-
-func (app *application) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
-	app.logError(r, err)
-
-	app.errorResponse(w, r, http.StatusInternalServerError, err.Error())
 }
 
 func (app *application) notFoundResponse(w http.ResponseWriter, r *http.Request) {

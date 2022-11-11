@@ -135,16 +135,13 @@ github.com/aws/smithy-go/time
 github.com/aws/smithy-go/transport/http
 github.com/aws/smithy-go/transport/http/internal/io
 github.com/aws/smithy-go/waiter
-# github.com/denisenkom/go-mssqldb v0.12.2
+# github.com/denisenkom/go-mssqldb v0.12.3
 ## explicit; go 1.13
 github.com/denisenkom/go-mssqldb
 github.com/denisenkom/go-mssqldb/internal/cp
 github.com/denisenkom/go-mssqldb/internal/decimal
 github.com/denisenkom/go-mssqldb/internal/querytext
 github.com/denisenkom/go-mssqldb/msdsn
-# github.com/felixge/httpsnoop v1.0.2
-## explicit; go 1.13
-github.com/felixge/httpsnoop
 # github.com/form3tech-oss/jwt-go v3.2.5+incompatible
 ## explicit
 github.com/form3tech-oss/jwt-go
@@ -204,10 +201,7 @@ github.com/sirupsen/logrus
 # github.com/snowflakedb/gosnowflake v1.6.13
 ## explicit; go 1.17
 github.com/snowflakedb/gosnowflake
-# github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce
-## explicit
-github.com/tomasen/realip
-# golang.org/x/crypto v0.0.0-20211117183948-ae814b36b871
+# golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d
 ## explicit; go 1.17
 golang.org/x/crypto/md4
 golang.org/x/crypto/ocsp
@@ -217,7 +211,7 @@ golang.org/x/net/html
 golang.org/x/net/html/atom
 golang.org/x/net/http/httpproxy
 golang.org/x/net/idna
-# golang.org/x/sync v0.0.0-20220907140024-f12130a52804
+# golang.org/x/sync v0.1.0
 ## explicit
 golang.org/x/sync/errgroup
 # golang.org/x/sys v0.0.0-20211117180635-dee7805ff2e1
@@ -232,9 +226,6 @@ golang.org/x/text/secure/bidirule
 golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
-# golang.org/x/time v0.0.0-20210723032227-1f47c861a9ac
-## explicit
-golang.org/x/time/rate
 # golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
 ## explicit; go 1.11
 golang.org/x/xerrors
