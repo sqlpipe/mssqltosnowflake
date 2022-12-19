@@ -70,6 +70,9 @@ const (
 	typeImage   = 0x22
 	typeNText   = 0x63
 	typeVariant = 0x62
+
+	// geometry
+	typeGeometry = 0xF0
 )
 const _PLP_NULL = 0xFFFFFFFFFFFFFFFF
 const _UNKNOWN_PLP_LEN = 0xFFFFFFFFFFFFFFFE
@@ -1119,6 +1122,8 @@ func makeGoLangScanType(ti typeInfo) reflect.Type {
 		return reflect.TypeOf([]byte{})
 	case typeVariant:
 		return reflect.TypeOf(nil)
+	case typeGeometry:
+		return reflect.TypeOf(nil)
 	default:
 		panic(fmt.Sprintf("not implemented makeGoLangScanType for type %d", ti.TypeId))
 	}
@@ -1346,6 +1351,8 @@ func makeGoLangTypeName(ti typeInfo) string {
 		return "IMAGE"
 	case typeVariant:
 		return "SQL_VARIANT"
+	case typeGeometry:
+		return "GEOMETRY"
 	case typeBigBinary:
 		return "BINARY"
 	default:
@@ -1468,10 +1475,12 @@ func makeGoLangTypeLength(ti typeInfo) (int64, bool) {
 		return 1073741823, true
 	case typeImage:
 		return 2147483647, true
-	case typeVariant:
-		return 0, false
 	case typeBigBinary:
 		return int64(ti.Size), true
+	case typeVariant:
+		return 0, false
+	case typeGeometry:
+		return 0, false
 	default:
 		panic(fmt.Sprintf("not implemented makeGoLangTypeLength for type %d", ti.TypeId))
 	}
@@ -1581,6 +1590,8 @@ func makeGoLangTypePrecisionScale(ti typeInfo) (int64, int64, bool) {
 	case typeImage:
 		return 0, 0, false
 	case typeVariant:
+		return 0, 0, false
+	case typeGeometry:
 		return 0, 0, false
 	case typeBigBinary:
 		return 0, 0, false

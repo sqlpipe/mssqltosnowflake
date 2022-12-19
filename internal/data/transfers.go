@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -19,16 +20,24 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-func onlyAlnum(word string) string {
-	result := ""
+func hasNonAlnum(word string) bool {
 	for _, charCode := range word {
 		char := fmt.Sprintf("%c", charCode)
-		if regexp.MustCompile(`^[a-zA-Z0-9]*$`).MatchString(char) {
-			result = result + char
+		if !regexp.MustCompile(`^[a-zA-Z0-9]*$`).MatchString(char) {
+			return true
 		}
 	}
-	return result
+	return false
 }
+
+func quoteIfTrue(word string, hasNonAlnum bool) string {
+	if hasNonAlnum {
+		return fmt.Sprintf(`"%v"`, word)
+	}
+	return word
+}
+
+var snowflakeReservedKeywords = map[string]bool{"ACCOUNT": true, "ALL": true, "ALTER": true, "AND": true, "ANY": true, "AS": true, "BETWEEN": true, "BY": true, "CASE": true, "CAST": true, "CHECK": true, "COLUMN": true, "CONNECT": true, "CONNECTION": true, "CONSTRAINT": true, "CREATE": true, "CROSS": true, "CURRENT": true, "CURRENT_DATE": true, "CURRENT_TIME": true, "CURRENT_TIMESTAMP": true, "CURRENT_USER": true, "DATABASE": true, "DELETE": true, "DISTINCT": true, "DROP": true, "ELSE": true, "EXISTS": true, "FALSE": true, "FOLLOWING": true, "FOR": true, "FROM": true, "FULL": true, "GRANT": true, "GROUP": true, "GSCLUSTER": true, "HAVING": true, "ILIKE": true, "IN": true, "INCREMENT": true, "INNER": true, "INSERT": true, "INTERSECT": true, "INTO": true, "IS": true, "ISSUE": true, "JOIN": true, "LATERAL": true, "LEFT": true, "LIKE": true, "LOCALTIME": true, "LOCALTIMESTAMP": true, "MINUS": true, "NATURAL": true, "NOT": true, "NULL": true, "OF": true, "ON": true, "OR": true, "ORDER": true, "ORGANIZATION": true, "QUALIFY": true, "REGEXP": true, "REVOKE": true, "RIGHT": true, "RLIKE": true, "ROW": true, "ROWS": true, "SAMPLE": true, "SCHEMA": true, "SELECT": true, "SET": true, "SOME": true, "START": true, "TABLE": true, "TABLESAMPLE": true, "THEN": true, "TO": true, "TRIGGER": true, "TRUE": true, "TRY_CAST": true, "UNION": true, "UNIQUE": true, "UPDATE": true, "USING": true, "VALUES": true, "VIEW": true, "WHEN": true, "WHENEVER": true, "WHERE": true, "WITH": true}
 
 type Query struct {
 	Schema                 string `json:"source_schema"`
@@ -60,7 +69,6 @@ type Transfer struct {
 }
 
 func (transfer Transfer) Run(ctx context.Context) error {
-	start := time.Now()
 	schemaRows, err := transfer.Source.Db.Query(
 		"SELECT S.name as schema_name, T.name as table_name FROM sys.tables AS T INNER JOIN sys.schemas AS S ON S.schema_id = T.schema_id LEFT JOIN sys.extended_properties AS EP ON EP.major_id = T.[object_id] WHERE T.is_ms_shipped = 0 AND (EP.class_desc IS NULL OR (EP.class_desc <>'OBJECT_OR_COLUMN' AND EP.[name] <> 'microsoft_database_tools_support'))",
 	)
@@ -68,8 +76,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 		return fmt.Errorf("error running query getting all db objects: %v", err)
 	}
 	defer schemaRows.Close()
-	fmt.Println("1: ", time.Since(start))
-	start = time.Now()
 
 	var sourceSchema string
 	var sourceTable string
@@ -79,12 +85,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("error scanning schema and table into query object: %v", err)
 		}
-
-		// targetTable := fmt.Sprintf("%v_%v", sourceSchema, sourceTable)
-		// randomCharacters, err := pkg.RandomCharacters(32)
-		// if err != nil {
-		// 	return fmt.Errorf("error generating random characters: %v", err)
-		// }
 
 		sourceQuery := fmt.Sprintf("select * from [%v].[%v]", sourceSchema, sourceTable)
 
@@ -102,12 +102,19 @@ func (transfer Transfer) Run(ctx context.Context) error {
 	}
 
 	transfer.Queries = queries
+	sourceDbNameHasNonAlnum := hasNonAlnum(transfer.Source.DbName)
+	schemaNameInSnowflake := quoteIfTrue(
+		fmt.Sprintf(
+			`MSSQL_%v_%v`,
+			strings.ToUpper(transfer.Target.DivisionCode),
+			strings.ToUpper(transfer.Source.DbName),
+		),
+		sourceDbNameHasNonAlnum,
+	)
 
 	dropSchemaQuery := fmt.Sprintf(
-		`drop schema if exists MSSQL_%v_%v`,
-		strings.ToUpper(transfer.Target.DivisionCode),
-		// `drop schema if exists MSSQL_%v`,
-		strings.ToUpper(onlyAlnum(transfer.Source.DbName)),
+		`drop schema if exists %v`,
+		schemaNameInSnowflake,
 	)
 	_, err = transfer.Target.Db.ExecContext(
 		ctx,
@@ -117,14 +124,9 @@ func (transfer Transfer) Run(ctx context.Context) error {
 		return fmt.Errorf("error running drop schema query, query was %v. error was: %v", dropSchemaQuery, err)
 	}
 
-	fmt.Println("2: ", time.Since(start))
-	start = time.Now()
-
 	createSchemaQuery := fmt.Sprintf(
-		`create schema MSSQL_%v_%v`,
-		strings.ToUpper(transfer.Target.DivisionCode),
-		// `create schema MSSQL_%v`,
-		strings.ToUpper(onlyAlnum(transfer.Source.DbName)),
+		`create schema %v`,
+		schemaNameInSnowflake,
 	)
 	_, err = transfer.Target.Db.ExecContext(
 		ctx,
@@ -133,16 +135,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error running create schema query, query was %v. error was: %v", createSchemaQuery, err)
 	}
-
-	fmt.Println("3: ", time.Since(start))
-	start = time.Now()
-
-	// for _, table := range transfer.Queries {
-	// 	fmt.Printf("%+v\n", table)
-	// }
-
-	fmt.Println("4: ", time.Since(start))
-	start = time.Now()
 
 	g := new(errgroup.Group)
 	g.SetLimit(10)
@@ -156,9 +148,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("error running extraction query: %v", err)
 			}
-
-			fmt.Println("5: ", time.Since(start))
-			start = time.Now()
 
 			columnInfo := ColumnInfo{
 				ColumnNames:         []string{},
@@ -195,13 +184,28 @@ func (transfer Transfer) Run(ctx context.Context) error {
 				return fmt.Errorf("error getting create table types: %v", err)
 			}
 
+			sourceSchemaNameHasNonAlnum := hasNonAlnum(table.Schema)
+			sourceTableNameHasNonAlnum := hasNonAlnum(table.Table)
+
+			eitherHasNonAlnum := false
+
+			if sourceSchemaNameHasNonAlnum || sourceTableNameHasNonAlnum {
+				eitherHasNonAlnum = true
+			}
+
+			tableNameInSnowflake := quoteIfTrue(
+				fmt.Sprintf(
+					`%v_%v`,
+					strings.ToUpper(table.Schema),
+					strings.ToUpper(table.Table),
+				),
+				eitherHasNonAlnum,
+			)
+
 			createTablequery := fmt.Sprintf(
-				`create table MSSQL_%v_%v.%v_%v (`,
-				strings.ToUpper(transfer.Target.DivisionCode),
-				// `create table MSSQL_%v.%v_%v (`,
-				strings.ToUpper(onlyAlnum(transfer.Source.DbName)),
-				strings.ToUpper(onlyAlnum(table.Schema)),
-				strings.ToUpper(onlyAlnum(table.Table)),
+				`create table %v.%v (`,
+				schemaNameInSnowflake,
+				tableNameInSnowflake,
 			)
 
 			for _, colNameAndType := range columnInfo.ColumnNamesAndTypes {
@@ -219,9 +223,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 			if err != nil {
 				return fmt.Errorf("error running create table query, query was %v. error was: %v", createTablequery, err)
 			}
-
-			fmt.Println("6: ", time.Since(start))
-			start = time.Now()
 
 			numCols := columnInfo.NumCols
 
@@ -272,9 +273,6 @@ func (transfer Transfer) Run(ctx context.Context) error {
 				}
 			}
 
-			fmt.Println("7: ", time.Since(start))
-			start = time.Now()
-
 			if dataInRam {
 				csvWriter.Flush()
 				reader, err := getGzipReader(stringBuilder.String())
@@ -287,16 +285,12 @@ func (transfer Transfer) Run(ctx context.Context) error {
 				}
 			}
 
-			fmt.Println("8: ", time.Since(start))
-			start = time.Now()
-
 			loadingQuery := fmt.Sprintf(
 				`copy into %v.%v from s3://%v/%v STORAGE_INTEGRATION = "%v" file_format = (format_name = %v)`,
-				strings.ToUpper(fmt.Sprintf("MSSQL_%v_%v", transfer.Target.DivisionCode, onlyAlnum(transfer.Source.DbName))),
-				// strings.ToUpper(fmt.Sprintf("MSSQL_%v", onlyAlnum(transfer.Source.DbName))),
-				strings.ToUpper(fmt.Sprintf("%v_%v", onlyAlnum(table.Schema), onlyAlnum(table.Table))),
+				schemaNameInSnowflake,
+				tableNameInSnowflake,
 				transfer.AwsConfig.S3Bucket,
-				fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, onlyAlnum(table.Table)),
+				fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, table.Table),
 				transfer.Target.StorageIntegration,
 				transfer.Target.FileFormatName,
 			)
@@ -306,32 +300,24 @@ func (transfer Transfer) Run(ctx context.Context) error {
 				return fmt.Errorf("error running copy command, query was %v, error was %v", loadingQuery, err)
 			}
 
-			fmt.Println("9: ", time.Since(start))
-			start = time.Now()
 			return nil
 		})
 	}
 
-	err = g.Wait()
-	if err != nil {
-		return err
-	}
+	errGroupError := g.Wait()
 
 	permissionsQuery := fmt.Sprintf(
-		"CALL RAW_TEST_DB.PUBLIC.SP_GRANT_RAW_PROFILE_SCHEMA_ACCESS ('%v', 'MSSQL_%v_%v', '');",
+		"CALL RAW_TEST_DB.PUBLIC.SP_GRANT_RAW_PROFILE_SCHEMA_ACCESS ('%v', '%v', '');",
 		transfer.Target.DbName,
-		strings.ToUpper(transfer.Target.DivisionCode),
-		strings.ToUpper(onlyAlnum(transfer.Source.DbName)),
+		schemaNameInSnowflake,
 	)
 
 	_, err = transfer.Target.Db.ExecContext(ctx, permissionsQuery)
 	if err != nil {
 		return fmt.Errorf("error running permissions query, query was %v, error was %v", permissionsQuery, err)
 	}
-	fmt.Println("10: ", time.Since(start))
-	start = time.Now()
 
-	return nil
+	return errGroupError
 }
 
 func getCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
@@ -405,7 +391,19 @@ func getCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 		default:
 			return columnInfo, fmt.Errorf("unknown type while getting create table types: %v", dbType)
 		}
-		colNameAndType := fmt.Sprintf(`%v %v`, strings.ToUpper(onlyAlnum(colName)), strings.ToUpper(createType))
+
+		colName = strings.ToUpper(colName)
+
+		// colHasNonAlnum := hasNonAlnum(colName)
+
+		// colName = quoteIfTrue(colName, colHasNonAlnum)
+
+		// check for snowflake reserved keywords or numbers being the first character or non alphanumeric chars
+		if snowflakeReservedKeywords[colName] || !unicode.IsLetter(rune(colName[0])) || hasNonAlnum(colName) {
+			colName = fmt.Sprintf(`"%v"`, colName)
+		}
+
+		colNameAndType := fmt.Sprintf(`%v %v`, colName, strings.ToUpper(createType))
 		columnInfo.ColumnNamesAndTypes = append(columnInfo.ColumnNamesAndTypes, colNameAndType)
 	}
 
@@ -452,7 +450,7 @@ func uploadAndTransfer(
 		return err
 	}
 
-	s3Path := fmt.Sprintf("%v/%v/%v/%v", s3Dir, transferId, onlyAlnum(tableName), randomChars)
+	s3Path := fmt.Sprintf("%v/%v/%v/%v", s3Dir, transferId, tableName, randomChars)
 
 	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
 		Bucket: &s3Bucket,

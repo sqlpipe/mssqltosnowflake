@@ -24,9 +24,10 @@ type cfg struct {
 }
 
 type application struct {
-	config cfg
-	logger *jsonlog.Logger
-	wg     sync.WaitGroup
+	config            cfg
+	transferStatusMap map[string]string
+	logger            *jsonlog.Logger
+	wg                sync.WaitGroup
 }
 
 func main() {
@@ -55,8 +56,9 @@ func main() {
 	}))
 
 	app := &application{
-		config: cfg,
-		logger: logger,
+		config:            cfg,
+		logger:            logger,
+		transferStatusMap: make(map[string]string),
 	}
 
 	err := app.serve()

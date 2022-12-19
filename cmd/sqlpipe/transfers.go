@@ -185,6 +185,8 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		AwsConfig: awsConfig,
 	}
 
+	app.transferStatusMap[transferId] = "running"
+
 	err = transfer.Run(r.Context())
 	if err != nil {
 		app.errorResponse(w, r, http.StatusBadRequest, fmt.Sprintf("error running transfer, err: %v", err))
