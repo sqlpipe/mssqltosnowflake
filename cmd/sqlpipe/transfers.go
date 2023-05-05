@@ -22,6 +22,23 @@ import (
 	"github.com/sqlpipe/mssqltosnowflake/pkg"
 )
 
+func (app *application) showTransferHandler(w http.ResponseWriter, r *http.Request) {
+	qs := r.URL.Query()
+
+	id := app.readString(qs, "id", "")
+
+	transfer, ok := app.transferMap[id]
+	if !ok {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	err := app.writeJSON(w, http.StatusOK, envelope{"transfer": transfer}, nil)
+	if err != nil {
+		app.errorResponse(w, r, http.StatusInternalServerError, err)
+	}
+}
+
 func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		AwsConfigS3Bucket        string `json:"aws_config_s3_bucket"`
@@ -42,6 +59,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		TargetStorageIntegration string `json:"target_storage_integration"`
 		TargetDivisionCode       string `json:"target_division_code"`
 		TargetFileFormatName     string `json:"target_file_format_name"`
+		// ServerName               string `json:"server_name"`
 	}
 
 	err := app.readJSON(w, r, &input)
@@ -66,6 +84,9 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		DbName:   input.SourceDbName,
 	}
 
+	// remove .NA.PACCAR.COM from servername
+	// serverName := strings.Replace(input.ServerName, ".NA.PACCAR.COM", "", -1)
+
 	target := data.Target{
 		AccountId:          input.TargetAccountId,
 		PrivateKeyLocation: input.TargetPrivateKeyLocation,
@@ -76,7 +97,8 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		DbName:             input.TargetDbName,
 		StorageIntegration: input.TargetStorageIntegration,
 		DivisionCode:       input.TargetDivisionCode,
-		FileFormatName:     input.TargetFileFormatName,
+		// ServerName:         serverName,
+		// FileFormatName:     input.TargetFileFormatName,
 	}
 
 	data.ValidateAwsConfig(v, awsConfig)
@@ -155,6 +177,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		Role:          target.Role,
 		Authenticator: gosnowflake.AuthTypeJwt,
 		PrivateKey:    &target.PrivateKey,
+		// Schema:        "sqlpipe",
 	}
 
 	targetDsn, err := gosnowflake.DSN(&snowflakeConfig)
@@ -183,21 +206,37 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		Source:    source,
 		Target:    target,
 		AwsConfig: awsConfig,
+		Status:    "running",
 	}
 
-	app.transferStatusMap[transferId] = "running"
-
-	err = transfer.Run(r.Context())
-	if err != nil {
-		app.errorResponse(w, r, http.StatusBadRequest, fmt.Sprintf("error running transfer, err: %v", err))
-		return
-	}
+	app.transferMap[transferId] = transfer
 
 	headers := make(http.Header)
 
-	err = app.writeJSON(w, http.StatusOK, envelope{"message": "success"}, headers)
+	responseMessage := envelope{
+		"transfer_id": transfer.Id,
+		"status":      "running",
+		"error":       "",
+	}
+
+	app.transferMap[transfer.Id] = transfer
+
+	err = app.writeJSON(w, http.StatusOK, responseMessage, headers)
 	if err != nil {
 		app.errorResponse(w, r, http.StatusBadRequest, fmt.Sprintf("error writing json response, err: %v", err))
 		return
 	}
+
+	app.background(func() {
+		err = transfer.Run()
+		if err != nil {
+			transfer.Status = "failed"
+			transfer.Error = err.Error()
+			app.transferMap[transfer.Id] = transfer
+			return
+		}
+
+		transfer.Status = "complete"
+		app.transferMap[transfer.Id] = transfer
+	})
 }

@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sqlpipe/mssqltosnowflake/internal/data"
 	"github.com/sqlpipe/mssqltosnowflake/internal/jsonlog"
 	"github.com/sqlpipe/mssqltosnowflake/internal/vcs" // New import
 
@@ -24,10 +25,10 @@ type cfg struct {
 }
 
 type application struct {
-	config            cfg
-	transferStatusMap map[string]string
-	logger            *jsonlog.Logger
-	wg                sync.WaitGroup
+	config      cfg
+	transferMap map[string]data.Transfer
+	logger      *jsonlog.Logger
+	wg          sync.WaitGroup
 }
 
 func main() {
@@ -56,9 +57,9 @@ func main() {
 	}))
 
 	app := &application{
-		config:            cfg,
-		logger:            logger,
-		transferStatusMap: make(map[string]string),
+		config:      cfg,
+		logger:      logger,
+		transferMap: make(map[string]data.Transfer),
 	}
 
 	err := app.serve()

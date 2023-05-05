@@ -19,7 +19,8 @@ type Target struct {
 	Db                 sql.DB         `json:"target_db"`
 	StorageIntegration string         `json:"target_storage_integration"`
 	DivisionCode       string         `json:"target_division_code"`
-	FileFormatName     string         `json:"file_format_name"`
+	// ServerName         string         `json:"server_name"`
+	// FileFormatName     string         `json:"file_format_name"`
 }
 
 func ValidateTarget(v *validator.Validator, target Target) {
@@ -32,5 +33,6 @@ func ValidateTarget(v *validator.Validator, target Target) {
 	v.Check(target.DbName != "", "target_db_name", "must be provided")
 	v.Check(target.StorageIntegration != "", "target_storage_integration", "must be provided")
 	v.Check(target.DivisionCode != "", "target_division_code", "must be provided")
-	v.Check(target.FileFormatName != "", "target_file_format_name", "must be provided")
+	// v.Check(target.ServerName != "", "server_name", "must be provided")
+	// v.Check(target.FileFormatName != "", "target_file_format_name", "must be provided")
 }
