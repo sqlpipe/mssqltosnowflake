@@ -27,6 +27,8 @@ func (app *application) serve() error {
 			"signal": s.String(),
 		})
 
+		app.putLogEvents(fmt.Sprintf("shutting down because of signal: %v", s))
+
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 

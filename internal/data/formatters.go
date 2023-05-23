@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-var formatters = map[string]func(value interface{}) (string, error){
+var Formatters = map[string]func(value interface{}) (string, error){
 	"BIT":              csvCastToBoolWriteBinaryEquivalent,
 	"FLOAT":            csvPrintRaw,
 	"DOUBLE":           csvPrintRaw,

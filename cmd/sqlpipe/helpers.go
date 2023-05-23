@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -139,15 +140,49 @@ func (app *application) background(fn func()) {
 	app.wg.Add(1)
 
 	go func() {
-
 		defer app.wg.Done()
-
 		defer func() {
 			if err := recover(); err != nil {
-				app.logger.PrintError(fmt.Errorf("%s", err), nil)
+				app.putLogEvents(fmt.Sprintf("handled panic: %v", err))
 			}
 		}()
-
 		fn()
 	}()
+}
+
+func getLocalIPAddress() (string, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+
+	for _, iface := range interfaces {
+		// Skip loopback interfaces
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+
+		for _, addr := range addrs {
+			var ip net.IP
+
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+
+			// Only return IPv4 addresses
+			if ip != nil && !ip.IsLoopback() && ip.To4() != nil {
+				return ip.String(), nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("Local IP address not found")
 }
