@@ -18,10 +18,11 @@ import (
 	"github.com/sqlpipe/mssqltosnowflake/pkg"
 )
 
-func HasNonAlnum(word string) bool {
+func HasNonAlnumOrSpace(word string) bool {
+	regex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
 	for _, charCode := range word {
 		char := fmt.Sprintf("%c", charCode)
-		if !regexp.MustCompile(`^[a-zA-Z0-9]*$`).MatchString(char) {
+		if !regex.MatchString(char) {
 			return true
 		}
 	}
@@ -58,14 +59,15 @@ type ColumnInfo struct {
 }
 
 type Transfer struct {
-	Id        string    `json:"transfer_id"`
-	CreatedAt time.Time `json:"transfer_created_at"`
-	Source    Source    `json:"-"`
-	Target    Target    `json:"-"`
-	AwsConfig AwsConfig `json:"-"`
-	Queries   []Query   `json:"transfer_queries"`
-	Status    string    `json:"transfer_status"`
-	Error     string    `json:"transfer_error"`
+	Id          string    `json:"transfer_id"`
+	CreatedAt   time.Time `json:"transfer_created_at"`
+	Concurrency int       `json:"concurrency"`
+	Source      *Source   `json:"-"`
+	Target      *Target   `json:"-"`
+	AwsConfig   AwsConfig `json:"-"`
+	Queries     []Query   `json:"transfer_queries"`
+	Status      string    `json:"transfer_status"`
+	Error       string    `json:"transfer_error"`
 }
 
 func GetCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
@@ -147,7 +149,7 @@ func GetCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 		// colName = quoteIfTrue(colName, colHasNonAlnum)
 
 		// check for snowflake reserved keywords or numbers being the first character or non alphanumeric chars
-		if snowflakeReservedKeywords[colName] || !unicode.IsLetter(rune(colName[0])) || HasNonAlnum(colName) {
+		if snowflakeReservedKeywords[colName] || !unicode.IsLetter(rune(colName[0])) || HasNonAlnumOrSpace(colName) {
 			colName = fmt.Sprintf(`"%v"`, colName)
 		}
 

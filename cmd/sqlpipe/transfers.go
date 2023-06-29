@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"reflect"
 	"strings"
+	"unicode"
 
 	_ "github.com/denisenkom/go-mssqldb"
 	"github.com/snowflakedb/gosnowflake"
@@ -60,7 +62,9 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		TargetDbName             string `json:"target_db_name"`
 		TargetStorageIntegration string `json:"target_storage_integration"`
 		TargetDivisionCode       string `json:"target_division_code"`
+		TargetRootName           string `json:"target_root_name"`
 		TargetFileFormatName     string `json:"target_file_format_name"`
+		Concurrency              int    `json:"concurrency"`
 		// ServerName               string `json:"server_name"`
 	}
 
@@ -99,6 +103,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		DbName:             input.TargetDbName,
 		StorageIntegration: input.TargetStorageIntegration,
 		DivisionCode:       input.TargetDivisionCode,
+		RootName:           input.TargetRootName,
 		// ServerName:         serverName,
 		// FileFormatName:     input.TargetFileFormatName,
 	}
@@ -129,7 +134,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	source.Db = *sourceDb
+	source.Db = sourceDb
 
 	priv, err := ioutil.ReadFile(target.PrivateKeyLocation)
 	if err != nil {
@@ -180,7 +185,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	target.Db = *targetDb
+	target.Db = targetDb
 
 	transferId, err := pkg.RandomCharacters(32)
 	if err != nil {
@@ -188,13 +193,18 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if input.Concurrency == 0 {
+		input.Concurrency = 20
+	}
+
 	transfer := data.Transfer{
-		Id:        transferId,
-		CreatedAt: time.Now(),
-		Source:    source,
-		Target:    target,
-		AwsConfig: awsConfig,
-		Status:    "running",
+		Id:          transferId,
+		CreatedAt:   time.Now(),
+		Source:      &source,
+		Target:      &target,
+		AwsConfig:   awsConfig,
+		Status:      "running",
+		Concurrency: input.Concurrency,
 	}
 
 	app.transferMap[transferId] = transfer
@@ -230,8 +240,29 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 }
 
 func (app *application) Run(transfer data.Transfer) error {
+	fmt.Println("TEST PRINT")
+	now := time.Now()
 	schemaRows, err := transfer.Source.Db.Query(
-		"SELECT S.name as schema_name, T.name as table_name FROM sys.tables AS T INNER JOIN sys.schemas AS S ON S.schema_id = T.schema_id LEFT JOIN sys.extended_properties AS EP ON EP.major_id = T.[object_id] WHERE T.is_ms_shipped = 0 AND (EP.class_desc IS NULL OR (EP.class_desc <>'OBJECT_OR_COLUMN' AND EP.[name] <> 'microsoft_database_tools_support'))",
+		// "SELECT S.name as schema_name, T.name as table_name FROM sys.tables AS T INNER JOIN sys.schemas AS S ON S.schema_id = T.schema_id LEFT JOIN sys.extended_properties AS EP ON EP.major_id = T.[object_id] WHERE T.is_ms_shipped = 0 AND (EP.class_desc IS NULL OR (EP.class_desc <>'OBJECT_OR_COLUMN' AND EP.[name] <> 'microsoft_database_tools_support'))",
+		`SELECT
+		S.name as schema_name,
+		T.name as table_name
+	FROM sys.tables AS T
+	INNER JOIN sys.schemas AS S ON S.schema_id = T.schema_id
+	LEFT JOIN sys.extended_properties AS EP ON EP.major_id = T.[object_id]
+	
+	LEFT JOIN sys.indexes i ON T.OBJECT_ID = i.object_id
+	LEFT JOIN sys.partitions p ON i.object_id = p.OBJECT_ID AND i.index_id = p.index_id
+	LEFT JOIN sys.allocation_units a ON p.partition_id = a.container_id
+	
+	WHERE T.is_ms_shipped = 0
+	AND (
+		EP.class_desc IS NULL
+		OR (EP.class_desc <>'OBJECT_OR_COLUMN'AND EP.[name] <> 'microsoft_database_tools_support')
+	)
+	GROUP BY
+		t.Name, s.Name
+	ORDER BY sum(used_pages) DESC`,
 	)
 	if err != nil {
 		return fmt.Errorf("error running query getting all db objects: %v", err)
@@ -262,25 +293,56 @@ func (app *application) Run(transfer data.Transfer) error {
 		return fmt.Errorf("error iterating over schemaRows: %v", err)
 	}
 
+	fmt.Printf("DB :%v, Time to get all db objects: %v\n", transfer.Source.DbName, time.Since(now).String())
+	now = time.Now()
+
+	transfer.Target.DbName = strings.ReplaceAll(transfer.Target.DbName, ".NA.PACCAR.COM", "")
+	transfer.Target.DbName = strings.ToUpper(transfer.Target.DbName)
+	transfer.Target.DbName = strings.ToUpper(transfer.Target.DbName)
+	transfer.Target.DbName = strings.ReplaceAll(transfer.Target.DbName, " ", "_")
+
 	transfer.Queries = queries
-	sourceDbNameHasNonAlnum := data.HasNonAlnum(transfer.Source.DbName)
-	// [Division]_MSSQL_[Source]_[Server]
-	schemaNameInSnowflake := data.QuoteIfTrue(
+	sourceDbNameHasNonAlnum := data.HasNonAlnumOrSpace(transfer.Source.DbName)
+
+	// cleanedSourceDbName := data.QuoteIfTrue(transfer.Source.DbName, sourceDbNameHasNonAlnum)
+
+	draftProdSchemaName := fmt.Sprintf(
+		`%v_MSSQL_%v`,
+		strings.ToUpper(transfer.Target.DivisionCode),
+		strings.ToUpper(transfer.Source.DbName),
+	)
+
+	stagingSchemaName := data.QuoteIfTrue(
 		fmt.Sprintf(
-			`%v_MSSQL_%v`,
+			`%v_MSSQL_%v_STAGING`,
 			strings.ToUpper(transfer.Target.DivisionCode),
 			strings.ToUpper(transfer.Source.DbName),
-			// strings.ToUpper(transfer.Target.ServerName),
 		),
 		sourceDbNameHasNonAlnum,
 	)
 
-	// remove .NA.PACCAR.COM from schema name
-	schemaNameInSnowflake = strings.ReplaceAll(schemaNameInSnowflake, ".NA.PACCAR.COM", "")
+	var prodSchemaNameFromSp string
+
+	callSpQuery := fmt.Sprintf(
+		`CALL %v.PUBLIC.SP_GRANT_SCHEMA_ACCESS('MSSQL','%v','%v','%v','SQLpipe');`,
+		transfer.Target.DbName,
+		transfer.Target.RootName,
+		strings.ToUpper(transfer.Source.DbName),
+		draftProdSchemaName,
+	)
+	err = transfer.Target.Db.QueryRow(callSpQuery).Scan(&prodSchemaNameFromSp)
+	if err != nil {
+		return fmt.Errorf("error calling sp_grant_schema_access, query was %v. error was: %v", callSpQuery, err)
+	}
+
+	fmt.Println("prodSchemaNameFromSp: ", prodSchemaNameFromSp)
+
+	fmt.Printf("DB :%v, Time to run sp_grant_schema_access: %v\n", transfer.Source.DbName, time.Since(now).String())
+	now = time.Now()
 
 	dropSchemaQuery := fmt.Sprintf(
 		`drop schema if exists %v`,
-		schemaNameInSnowflake,
+		stagingSchemaName,
 	)
 	_, err = transfer.Target.Db.Exec(
 		dropSchemaQuery,
@@ -289,9 +351,12 @@ func (app *application) Run(transfer data.Transfer) error {
 		return fmt.Errorf("error running drop schema query, query was %v. error was: %v", dropSchemaQuery, err)
 	}
 
+	fmt.Printf("DB :%v, Time to drop staging schema: %v\n", transfer.Source.DbName, time.Since(now).String())
+	now = time.Now()
+
 	createSchemaQuery := fmt.Sprintf(
-		`create schema %v`,
-		schemaNameInSnowflake,
+		`create schema if not exists %v`,
+		stagingSchemaName,
 	)
 	_, err = transfer.Target.Db.Exec(
 		createSchemaQuery,
@@ -299,6 +364,9 @@ func (app *application) Run(transfer data.Transfer) error {
 	if err != nil {
 		return fmt.Errorf("error running create schema query, query was %v. error was: %v", createSchemaQuery, err)
 	}
+
+	fmt.Printf("DB :%v, Time to create staging schema: %v\n", transfer.Source.DbName, time.Since(now).String())
+	now = time.Now()
 
 	snowflakeConfig := gosnowflake.Config{
 		Account:       transfer.Target.AccountId,
@@ -308,7 +376,7 @@ func (app *application) Run(transfer data.Transfer) error {
 		Role:          transfer.Target.Role,
 		Authenticator: gosnowflake.AuthTypeJwt,
 		PrivateKey:    &transfer.Target.PrivateKey,
-		Schema:        schemaNameInSnowflake,
+		Schema:        stagingSchemaName,
 	}
 
 	targetDsn, err := gosnowflake.DSN(&snowflakeConfig)
@@ -327,6 +395,9 @@ func (app *application) Run(transfer data.Transfer) error {
 		return fmt.Errorf("error pinging snowflake connection: %v", err)
 	}
 
+	fmt.Printf("DB :%v, Time to create snowflake connection: %v\n", transfer.Source.DbName, time.Since(now).String())
+	now = time.Now()
+
 	// create sqlpipe_csv file format in targetDb
 	createFileFormatQuery := `CREATE OR REPLACE FILE FORMAT SQLPIPE_CSV ESCAPE_UNENCLOSED_FIELD = 'NONE' FIELD_OPTIONALLY_ENCLOSED_BY = '\"' COMPRESSION = NONE;`
 	_, err = targetDb.Exec(
@@ -336,11 +407,23 @@ func (app *application) Run(transfer data.Transfer) error {
 		return fmt.Errorf("error running create file format query, query was %v. error was: %v", createFileFormatQuery, err)
 	}
 
-	g := new(errgroup.Group)
-	g.SetLimit(10)
-	for queryIndexOuter, tableOuter := range transfer.Queries {
-		go func(queryIndex int, table data.Query) {
-			g.Go(func() error {
+	fmt.Printf("DB :%v, Time to create file format: %v\n", transfer.Source.DbName, time.Since(now).String())
+
+	fmt.Printf("DB :%v, Now (%v) starting errgroup with concurrency %v\n", transfer.Source.DbName, now.Format(time.RFC3339), transfer.Concurrency)
+
+	g, errGroupContext := errgroup.WithContext(context.Background())
+	g.SetLimit(transfer.Concurrency)
+	for queryIndex, table := range transfer.Queries {
+
+		queryIndex := queryIndex
+		table := table
+
+		g.Go(func() error {
+			select {
+			case <-errGroupContext.Done():
+				return errGroupContext.Err()
+			default:
+				fmt.Printf("DB :%v, Now (%v) starting transfer of %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 				transferRows, err := transfer.Source.Db.Query(table.SourceQuery)
 				if err != nil {
 					return fmt.Errorf("error running extraction query: %v", err)
@@ -376,13 +459,17 @@ func (app *application) Run(transfer data.Transfer) error {
 
 				columnInfo.NumCols = len(columnInfo.ColumnNames)
 
+				fmt.Printf("DB :%v, Now (%v) getting create table types for %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 				columnInfo, err = data.GetCreateTableTypes(columnInfo)
 				if err != nil {
 					return fmt.Errorf("error getting create table types: %v", err)
 				}
 
-				sourceSchemaNameHasNonAlnum := data.HasNonAlnum(table.Schema)
-				sourceTableNameHasNonAlnum := data.HasNonAlnum(table.Table)
+				table.Schema = strings.ReplaceAll(strings.ToUpper(table.Schema), " ", "_")
+				table.Table = strings.ReplaceAll(strings.ToUpper(table.Table), " ", "_")
+
+				sourceSchemaNameHasNonAlnum := data.HasNonAlnumOrSpace(table.Schema)
+				sourceTableNameHasNonAlnum := data.HasNonAlnumOrSpace(table.Table)
 
 				eitherHasNonAlnum := false
 
@@ -390,19 +477,26 @@ func (app *application) Run(transfer data.Transfer) error {
 					eitherHasNonAlnum = true
 				}
 
-				tableNameInSnowflake := data.QuoteIfTrue(
+				cleanedTableName := data.QuoteIfTrue(
 					fmt.Sprintf(
 						`%v_%v`,
-						strings.ToUpper(table.Schema),
-						strings.ToUpper(table.Table),
+						table.Schema,
+						table.Table,
 					),
 					eitherHasNonAlnum,
 				)
 
+				s3DirName := CleanString(
+					fmt.Sprintf("%v_%v",
+						table.Schema,
+						table.Table,
+					),
+				)
+
 				createTablequery := fmt.Sprintf(
-					`create table %v.%v (`,
-					schemaNameInSnowflake,
-					tableNameInSnowflake,
+					`create table if not exists %v.%v (`,
+					stagingSchemaName,
+					cleanedTableName,
 				)
 
 				for _, colNameAndType := range columnInfo.ColumnNamesAndTypes {
@@ -412,6 +506,8 @@ func (app *application) Run(transfer data.Transfer) error {
 				createTablequery = strings.TrimSuffix(createTablequery, ", ")
 				createTablequery = createTablequery + ");"
 				transfer.Queries[queryIndex].TargetCreateTableQuery = createTablequery
+
+				fmt.Printf("DB :%v, Now (%v) creating table %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), stagingSchemaName, cleanedTableName)
 
 				_, err = targetDb.Exec(
 					createTablequery,
@@ -434,6 +530,8 @@ func (app *application) Run(transfer data.Transfer) error {
 					valPtrs[i] = &vals[i]
 				}
 
+				fmt.Printf("DB :%v, Now (%v) starting transfer of %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
+
 				rowVals := make([]string, numCols)
 				for i := 1; transferRows.Next(); i++ {
 					transferRows.Scan(valPtrs...)
@@ -455,12 +553,13 @@ func (app *application) Run(transfer data.Transfer) error {
 					dataInRam = true
 
 					if data.TurboInsertChecker(stringBuilder.Len()) {
+						fmt.Printf("DB :%v, Now (%v) uploading and transferring %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 						csvWriter.Flush()
 						reader, err := data.GetGzipReader(stringBuilder.String())
 						if err != nil {
 							return fmt.Errorf("error getting gzip reader: %v", err)
 						}
-						err = data.UploadAndTransfer(reader, app.uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+						err = data.UploadAndTransfer(reader, app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
 						if err != nil {
 							return fmt.Errorf("error running upload and transfer: %v", err)
 						}
@@ -470,53 +569,101 @@ func (app *application) Run(transfer data.Transfer) error {
 				}
 
 				if dataInRam {
+					fmt.Printf("DB :%v, Now (%v) starting final upload and transfer of %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 					csvWriter.Flush()
 					reader, err := data.GetGzipReader(stringBuilder.String())
 					if err != nil {
 						return fmt.Errorf("error getting gzip reader: %v", err)
 					}
-					err = data.UploadAndTransfer(reader, app.uploader, table.Table, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+					err = data.UploadAndTransfer(reader, app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
 					if err != nil {
 						return fmt.Errorf("error running upload and transfer: %v", err)
 					}
 				}
 
+				fmt.Printf("DB :%v, Now (%v) finished upload of %v.%v, starting s3 copy\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
+
 				loadingQuery := fmt.Sprintf(
 					`copy into %v.%v from s3://%v/%v STORAGE_INTEGRATION = "%v" file_format = (format_name = SQLPIPE_CSV)`,
-					schemaNameInSnowflake,
-					tableNameInSnowflake,
+					stagingSchemaName,
+					cleanedTableName,
 					transfer.AwsConfig.S3Bucket,
-					fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, table.Table),
+					fmt.Sprintf("%v/%v/%v/", transfer.AwsConfig.S3Dir, transfer.Id, s3DirName),
 					transfer.Target.StorageIntegration,
 					// transfer.Target.FileFormatName,
 				)
-
 				_, err = targetDb.Exec(loadingQuery)
 				if err != nil {
 					return fmt.Errorf("error running copy command, query was %v, error was %v", loadingQuery, err)
 				}
 
+				fmt.Printf("DB :%v, Now (%v) finished s3 copy of %v.%v, starting deletion of table in prod schema\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
+
+				dropTableInProdQuery := fmt.Sprintf(
+					`drop table if exists %v.%v.%v;`,
+					transfer.Target.DbName,
+					prodSchemaNameFromSp,
+					cleanedTableName,
+				)
+				_, err = targetDb.Exec(dropTableInProdQuery)
+				if err != nil {
+					return fmt.Errorf("error running command to drop table in prod schema, query was %v, error was %v", dropTableInProdQuery, err)
+				}
+
+				fmt.Printf("DB :%v, Now (%v) finished dropping table in prod schema of %v.%v, starting move staging to prod schema\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
+
+				moveTableFromStagingToProdSchema := fmt.Sprintf(
+					`alter table %v.%v.%v rename to %v.%v.%v;`,
+					transfer.Target.DbName,
+					stagingSchemaName,
+					cleanedTableName,
+					transfer.Target.DbName,
+					prodSchemaNameFromSp,
+					cleanedTableName,
+				)
+				_, err = targetDb.Exec(moveTableFromStagingToProdSchema)
+				if err != nil {
+					return fmt.Errorf("error running command to move table from staging to prod schema, query was %v, error was %v", moveTableFromStagingToProdSchema, err)
+				}
+
+				fmt.Printf("DB :%v, Now (%v) finished moving table from staging to prod schema of %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
+
 				return nil
-			})
-		}(queryIndexOuter, tableOuter)
+			}
+		})
 	}
 
+	fmt.Printf("DB :%v, Now (%v) waiting for all queries of db %v to finish\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), transfer.Source.DbName)
+
 	errGroupError := g.Wait()
-	if err != nil {
+	if errGroupError != nil {
 		return fmt.Errorf("error running transfer queries: %v", errGroupError)
 	}
 
-	permissionsQuery := fmt.Sprintf(
-		"CALL %v.sqlpipe.SP_GRANT_RAW_PROFILE_SCHEMA_ACCESS ('%v', '%v', '');",
-		transfer.Target.DbName,
-		transfer.Target.DbName,
-		schemaNameInSnowflake,
-	)
+	fmt.Printf("DB :%v, Now (%v) finished all queries\n", transfer.Source.DbName, time.Now().Format(time.RFC3339))
 
-	_, err = targetDb.Exec(permissionsQuery)
+	dropStagingSchemaQuery := fmt.Sprintf(
+		`drop schema if exists %v;`,
+		stagingSchemaName,
+	)
+	_, err = targetDb.Exec(dropStagingSchemaQuery)
 	if err != nil {
-		return fmt.Errorf("error running permissions query, query was %v, error was %v", permissionsQuery, err)
+		return fmt.Errorf("error running drop staging schema query, query was %v, error was %v", dropStagingSchemaQuery, err)
 	}
 
+	fmt.Printf("DB :%v, Now (%v) is donezo\n", transfer.Source.DbName, time.Now().Format(time.RFC3339))
+
 	return nil
+}
+
+func CleanString(input string) string {
+	var sb strings.Builder
+
+	for _, r := range input {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			sb.WriteRune(r)
+		}
+	}
+
+	return sb.String()
 }
