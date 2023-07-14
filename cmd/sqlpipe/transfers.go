@@ -65,6 +65,7 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 		TargetRootName           string `json:"target_root_name"`
 		TargetFileFormatName     string `json:"target_file_format_name"`
 		Concurrency              int    `json:"concurrency"`
+		ChunkSize                int    `json:"chunk_size"`
 		// ServerName               string `json:"server_name"`
 	}
 
@@ -77,9 +78,14 @@ func (app *application) createTransferHandler(w http.ResponseWriter, r *http.Req
 	v := validator.New()
 
 	awsConfig := data.AwsConfig{
-		S3Bucket: input.AwsConfigS3Bucket,
-		S3Dir:    input.AwsConfigS3Dir,
-		Region:   input.AwsConfigRegion,
+		S3Bucket:  input.AwsConfigS3Bucket,
+		S3Dir:     input.AwsConfigS3Dir,
+		Region:    input.AwsConfigRegion,
+		ChunkSize: input.ChunkSize,
+	}
+
+	if awsConfig.ChunkSize == 0 {
+		awsConfig.ChunkSize = 100000000
 	}
 
 	source := data.Source{
@@ -552,17 +558,18 @@ func (app *application) Run(transfer data.Transfer) error {
 
 					dataInRam = true
 
-					if data.TurboInsertChecker(stringBuilder.Len()) {
+					if data.TurboInsertChecker(stringBuilder.Len(), transfer.AwsConfig.ChunkSize) {
 						fmt.Printf("DB :%v, Now (%v) uploading and transferring %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 						csvWriter.Flush()
-						reader, err := data.GetGzipReader(stringBuilder.String())
-						if err != nil {
-							return fmt.Errorf("error getting gzip reader: %v", err)
-						}
-						err = data.UploadAndTransfer(reader, app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
-						if err != nil {
-							return fmt.Errorf("error running upload and transfer: %v", err)
-						}
+						// reader, err := data.GetGzipReader(stringBuilder.String())
+						// if err != nil {
+						// 	return fmt.Errorf("error getting gzip reader: %v", err)
+						// }
+
+						go data.UploadAndTransfer(stringBuilder.String(), app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+						// if err != nil {
+						// 	return fmt.Errorf("error running upload and transfer: %v", err)
+						// }
 						dataInRam = false
 						stringBuilder.Reset()
 					}
@@ -571,11 +578,11 @@ func (app *application) Run(transfer data.Transfer) error {
 				if dataInRam {
 					fmt.Printf("DB :%v, Now (%v) starting final upload and transfer of %v.%v\n", transfer.Source.DbName, time.Now().Format(time.RFC3339), table.Schema, table.Table)
 					csvWriter.Flush()
-					reader, err := data.GetGzipReader(stringBuilder.String())
-					if err != nil {
-						return fmt.Errorf("error getting gzip reader: %v", err)
-					}
-					err = data.UploadAndTransfer(reader, app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
+					// reader, err := data.GetGzipReader(stringBuilder.String())
+					// if err != nil {
+					// 	return fmt.Errorf("error getting gzip reader: %v", err)
+					// }
+					err = data.UploadAndTransfer(stringBuilder.String(), app.uploader, s3DirName, transfer.Id, transfer.AwsConfig.S3Dir, transfer.AwsConfig.S3Bucket)
 					if err != nil {
 						return fmt.Errorf("error running upload and transfer: %v", err)
 					}

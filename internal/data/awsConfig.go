@@ -8,9 +8,10 @@ type AwsConfig struct {
 	// Key      string           `json:"-"`
 	// Secret   string           `json:"-"`
 	// Token    string           `json:"-"`
-	S3Bucket string `json:"aws_config_s3_bucket"`
-	S3Dir    string `json:"aws_config_s3_dir"`
-	Region   string `json:"aws_config_region"`
+	S3Bucket  string `json:"aws_config_s3_bucket"`
+	S3Dir     string `json:"aws_config_s3_dir"`
+	Region    string `json:"aws_config_region"`
+	ChunkSize int    `json:"chunk_size"`
 	// Uploader manager.Uploader `json:"aws_s3_uploader"`
 }
 

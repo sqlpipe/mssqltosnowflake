@@ -160,10 +160,10 @@ func GetCreateTableTypes(columnInfo ColumnInfo) (ColumnInfo, error) {
 	return columnInfo, nil
 }
 
-func TurboInsertChecker(currentLen int) bool {
+func TurboInsertChecker(currentLen int, chunkSize int) bool {
 	if currentLen == 0 {
 		return false
-	} else if currentLen > 10000000 {
+	} else if currentLen > chunkSize {
 		return true
 	} else {
 		return false
@@ -187,7 +187,7 @@ func GetGzipReader(contents string) (zr io.Reader, err error) {
 }
 
 func UploadAndTransfer(
-	reader io.Reader,
+	body string,
 	uploader *manager.Uploader,
 	tableName string,
 	transferId string,
@@ -201,6 +201,8 @@ func UploadAndTransfer(
 	}
 
 	s3Path := fmt.Sprintf("%v/%v/%v/%v", s3Dir, transferId, tableName, randomChars)
+
+	reader := strings.NewReader(body)
 
 	_, err = uploader.Upload(context.TODO(), &s3.PutObjectInput{
 		Bucket: &s3Bucket,
