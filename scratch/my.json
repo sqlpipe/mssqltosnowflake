@@ -1,8 +1,0 @@
-{
-  "source_schema": "dbo",
-  "source_table": "PublishHistory",
-  "source_query": "select * from dbo.PublishHistory",
-  "s3_path": "transfer/FleCp79QNnCznpsxXSkacAXhItG2LPiq/dbo_PublishHistory/IEtEtUQmIsaUFXRebWcrFVUkfi75H7S9",
-  "target_create_table_query": "create table MSSQL_test_db.dbo_PublishHistory (PublishHistoryIdentifier BIGINT, PublishDateTime TIMESTAMP, PublishStateCode VARCHAR(4), DivisionCode CHAR(1), PublishTypeCode CHAR(1), DestinationSystemCode VARCHAR(4), PublishDetailsText VARCHAR(2000), SalesOptionCode CHAR(7), OPSLine1Description VARCHAR(255), TruckModelCode CHAR(7), TruckModelName VARCHAR(75), TimePeriodStartDate TIMESTAMP, TimePeriodDescription VARCHAR(255));",
-  "target_query": "copy into MSSQL_test_db.dbo_PublishHistory from s3://sqlpipe-carrier/transfer credentials=(aws_key_id='AKIAVDSQ54QCCKHWLXI7' aws_secret_key='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' ) file_format = (format_name = sqlpipe_csv)"
-}
