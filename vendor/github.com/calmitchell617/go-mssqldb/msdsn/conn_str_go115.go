@@ -10,7 +10,7 @@ import (
 )
 
 func setupTLSCommonName(config *tls.Config, pem []byte) error {
-	// fix for https://github.com/denisenkom/go-mssqldb/issues/704
+	// fix for https://github.com/calmitchell617/go-mssqldb/issues/704
 	// A SSL/TLS certificate Common Name (CN) containing the ":" character
 	// (which is a non-standard character) will cause normal verification to fail.
 	// Since the VerifyConnection callback runs after normal certificate

@@ -1,8 +1,8 @@
 # A pure Go MSSQL driver for Go's database/sql package
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/denisenkom/go-mssqldb.svg)](https://pkg.go.dev/github.com/denisenkom/go-mssqldb)
-[![Build status](https://ci.appveyor.com/api/projects/status/jrln8cs62wj9i0a2?svg=true)](https://ci.appveyor.com/project/denisenkom/go-mssqldb)
-[![codecov](https://codecov.io/gh/denisenkom/go-mssqldb/branch/master/graph/badge.svg)](https://codecov.io/gh/denisenkom/go-mssqldb)
+[![Go Reference](https://pkg.go.dev/badge/github.com/calmitchell617/go-mssqldb.svg)](https://pkg.go.dev/github.com/calmitchell617/go-mssqldb)
+[![Build status](https://ci.appveyor.com/api/projects/status/jrln8cs62wj9i0a2?svg=true)](https://ci.appveyor.com/project/calmitchell617/go-mssqldb)
+[![codecov](https://codecov.io/gh/calmitchell617/go-mssqldb/branch/master/graph/badge.svg)](https://codecov.io/gh/calmitchell617/go-mssqldb)
 
 For more recent updates, see the [Microsoft fork](https://github.com/microsoft/go-mssqldb).
 
@@ -10,7 +10,7 @@ For more recent updates, see the [Microsoft fork](https://github.com/microsoft/g
 
 Requires Go 1.8 or above.
 
-Install with `go get github.com/denisenkom/go-mssqldb` .
+Install with `go get github.com/calmitchell617/go-mssqldb` .
 
 ## Connection Parameters and DSN
 
@@ -142,7 +142,7 @@ import (
   "net/url"
 
   // Import the Azure AD driver module (also imports the regular driver package)
-  "github.com/denisenkom/go-mssqldb/azuread"
+  "github.com/calmitchell617/go-mssqldb/azuread"
 )
 
 func ConnectWithMSI() (*sql.DB, error) {
@@ -290,9 +290,9 @@ are supported:
  or add a `select ID = convert(bigint, SCOPE_IDENTITY());` to the end of your
  query (ref [SCOPE_IDENTITY](https://docs.microsoft.com/en-us/sql/t-sql/functions/scope-identity-transact-sql)).
  This will ensure you are getting the correct ID and will prevent a network round trip.
-* [NewConnector](https://godoc.org/github.com/denisenkom/go-mssqldb#NewConnector)
+* [NewConnector](https://godoc.org/github.com/calmitchell617/go-mssqldb#NewConnector)
     may be used with [OpenDB](https://golang.org/pkg/database/sql/#OpenDB).
-* [Connector.SessionInitSQL](https://godoc.org/github.com/denisenkom/go-mssqldb#Connector.SessionInitSQL)
+* [Connector.SessionInitSQL](https://godoc.org/github.com/calmitchell617/go-mssqldb#Connector.SessionInitSQL)
  may be set to set any driver specific session settings after the session
  has been reset. If empty the session will still be reset but use the database
  defaults in Go1.10+.

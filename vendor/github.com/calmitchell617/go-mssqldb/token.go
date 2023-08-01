@@ -9,7 +9,7 @@ import (
 	"io/ioutil"
 	"strconv"
 
-	"github.com/denisenkom/go-mssqldb/msdsn"
+	"github.com/calmitchell617/go-mssqldb/msdsn"
 	"github.com/golang-sql/sqlexp"
 )
 

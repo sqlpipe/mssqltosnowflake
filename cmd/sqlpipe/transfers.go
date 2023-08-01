@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode"
 
-	_ "github.com/denisenkom/go-mssqldb"
+	_ "github.com/calmitchell617/go-mssqldb"
 	"github.com/snowflakedb/gosnowflake"
 	"golang.org/x/sync/errgroup"
 

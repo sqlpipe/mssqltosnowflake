@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/denisenkom/go-mssqldb/msdsn"
+	"github.com/calmitchell617/go-mssqldb/msdsn"
 )
 
 // Federated authentication library affects the login data structure and message sequence.
@@ -57,7 +57,7 @@ func NewSecurityTokenConnector(config msdsn.Config, tokenProvider func(ctx conte
 	return conn, nil
 }
 
-// newADALTokenConnector creates a new connector from a Config and a Active Directory token provider.
+// NewActiveDirectoryTokenConnector creates a new connector from a Config and an Active Directory token provider.
 // Token provider implementations are called during federated
 // authentication login sequences where the server provides a service
 // principal name and security token service endpoint that should be used

@@ -3,13 +3,12 @@ module github.com/sqlpipe/mssqltosnowflake
 go 1.18
 
 require (
-	github.com/aws/aws-sdk-go v1.44.258
 	github.com/aws/aws-sdk-go-v2 v1.18.0
 	github.com/aws/aws-sdk-go-v2/config v1.18.23
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.11.32
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.20.11
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.27.10
-	github.com/denisenkom/go-mssqldb v0.12.3
+	github.com/calmitchell617/go-mssqldb v0.0.0-20230801115052-53c621b82f50
 	github.com/julienschmidt/httprouter v1.3.0
 	github.com/lib/pq v1.10.2
 	github.com/snowflakedb/gosnowflake v1.6.13
@@ -37,7 +36,7 @@ require (
 	github.com/aws/smithy-go v1.13.5 // indirect
 	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
 	github.com/gabriel-vasile/mimetype v1.4.0 // indirect
-	github.com/golang-sql/civil v0.0.0-20190719163853-cb61b32ac6fe // indirect
+	github.com/golang-sql/civil v0.0.0-20220223132316-b832511892a9 // indirect
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/google/flatbuffers v2.0.0+incompatible // indirect
 	github.com/google/uuid v1.3.0 // indirect
@@ -47,9 +46,9 @@ require (
 	github.com/pierrec/lz4/v4 v4.1.11 // indirect
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
-	golang.org/x/crypto v0.0.0-20220622213112-05595931fe9d // indirect
-	golang.org/x/net v0.1.0 // indirect
-	golang.org/x/sys v0.1.0 // indirect
-	golang.org/x/text v0.4.0 // indirect
+	golang.org/x/crypto v0.11.0 // indirect
+	golang.org/x/net v0.12.0 // indirect
+	golang.org/x/sys v0.10.0 // indirect
+	golang.org/x/text v0.11.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 )

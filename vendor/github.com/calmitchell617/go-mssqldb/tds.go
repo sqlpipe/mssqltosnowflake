@@ -16,7 +16,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"github.com/denisenkom/go-mssqldb/msdsn"
+	"github.com/calmitchell617/go-mssqldb/msdsn"
 )
 
 func parseInstances(msg []byte) map[string]map[string]string {
@@ -223,7 +223,7 @@ func readPrelogin(r *tdsBuffer) (map[uint8][]byte, error) {
 		return nil, err
 	}
 	if packet_type != packReply {
-		return nil, errors.New("invalid respones, expected packet type 4, PRELOGIN RESPONSE")
+		return nil, errors.New("invalid response, expected packet type 4, PRELOGIN RESPONSE")
 	}
 	if len(struct_buf) == 0 {
 		return nil, errors.New("invalid empty PRELOGIN response, it must contain at least one byte")
@@ -1142,7 +1142,7 @@ initiate_connection:
 			if config.DynamicRecordSizingDisabled == false {
 				config = config.Clone()
 
-				// fix for https://github.com/denisenkom/go-mssqldb/issues/166
+				// fix for https://github.com/calmitchell617/go-mssqldb/issues/166
 				// Go implementation of TLS payload size heuristic algorithm splits single TDS package to multiple TCP segments,
 				// while SQL Server seems to expect one TCP segment per encrypted TDS package.
 				// Setting DynamicRecordSizingDisabled to true disables that algorithm and uses 16384 bytes per TLS package

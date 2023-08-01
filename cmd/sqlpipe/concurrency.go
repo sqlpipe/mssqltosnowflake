@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 
-	_ "github.com/denisenkom/go-mssqldb"
-
 	"net/http"
 )
 
