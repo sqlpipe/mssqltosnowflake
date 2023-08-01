@@ -3,7 +3,8 @@
         "github.com/aws/aws-sdk-go-v2": "v1.4.0",
         "github.com/aws/aws-sdk-go-v2/internal/configsources": "v0.0.0-00010101000000-000000000000",
         "github.com/aws/aws-sdk-go-v2/internal/endpoints/v2": "v2.0.0-00010101000000-000000000000",
-        "github.com/aws/smithy-go": "v1.4.0"
+        "github.com/aws/smithy-go": "v1.4.0",
+        "github.com/google/go-cmp": "v0.5.4"
     },
     "files": [
         "api_client.go",
@@ -13,6 +14,7 @@
         "api_op_CreateExportTask.go",
         "api_op_CreateLogGroup.go",
         "api_op_CreateLogStream.go",
+        "api_op_DeleteAccountPolicy.go",
         "api_op_DeleteDataProtectionPolicy.go",
         "api_op_DeleteDestination.go",
         "api_op_DeleteLogGroup.go",
@@ -22,6 +24,7 @@
         "api_op_DeleteResourcePolicy.go",
         "api_op_DeleteRetentionPolicy.go",
         "api_op_DeleteSubscriptionFilter.go",
+        "api_op_DescribeAccountPolicies.go",
         "api_op_DescribeDestinations.go",
         "api_op_DescribeExportTasks.go",
         "api_op_DescribeLogGroups.go",
@@ -40,6 +43,7 @@
         "api_op_GetQueryResults.go",
         "api_op_ListTagsForResource.go",
         "api_op_ListTagsLogGroup.go",
+        "api_op_PutAccountPolicy.go",
         "api_op_PutDataProtectionPolicy.go",
         "api_op_PutDestination.go",
         "api_op_PutDestinationPolicy.go",
@@ -59,6 +63,7 @@
         "deserializers.go",
         "doc.go",
         "endpoints.go",
+        "endpoints_test.go",
         "generated.json",
         "internal/endpoints/endpoints.go",
         "internal/endpoints/endpoints_test.go",

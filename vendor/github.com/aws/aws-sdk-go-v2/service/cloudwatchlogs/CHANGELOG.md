@@ -1,3 +1,32 @@
+# v1.23.0 (2023-07-31)
+
+* **Feature**: Adds support for smithy-modeled endpoint resolution. A new rules-based endpoint resolution will be added to the SDK which will supercede and deprecate existing endpoint resolution. Specifically, EndpointResolver will be deprecated while BaseEndpoint and EndpointResolverV2 will take its place. For more information, please see the Endpoints section in our Developer Guide.
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.22.2 (2023-07-28)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.22.1 (2023-07-13)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.22.0 (2023-07-07)
+
+* **Feature**: Add CMK encryption support for CloudWatch Logs Insights query result data
+
+# v1.21.2 (2023-06-15)
+
+* No change notes available for this release.
+
+# v1.21.1 (2023-06-13)
+
+* **Dependency Update**: Updated to the latest SDK module versions
+
+# v1.21.0 (2023-06-07)
+
+* **Feature**: This change adds support for account level data protection policies using 3 new APIs, PutAccountPolicy, DeleteAccountPolicy and DescribeAccountPolicy. DescribeLogGroup API has been modified to indicate if account level policy is applied to the LogGroup via "inheritedProperties" list in the response.
+
 # v1.20.11 (2023-05-04)
 
 * No change notes available for this release.

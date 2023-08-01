@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"strconv"
 )
@@ -173,7 +172,7 @@ func encryptFile(
 	if chunkSize == 0 {
 		chunkSize = aes.BlockSize * 4 * 1024
 	}
-	tmpOutputFile, err := ioutil.TempFile(tmpDir, baseName(filename)+"#")
+	tmpOutputFile, err := os.CreateTemp(tmpDir, baseName(filename)+"#")
 	if err != nil {
 		return nil, "", err
 	}
@@ -216,7 +215,10 @@ func decryptFile(
 	if err = decryptECB(decryptedKey, keyBytes, decodedKey); err != nil {
 		return "", err
 	}
-	decryptedKey = paddingTrim(decryptedKey)
+	decryptedKey, err = paddingTrim(decryptedKey)
+	if err != nil {
+		return "", err
+	}
 
 	// decrypt file
 	block, err := aes.NewCipher(decryptedKey)
@@ -225,7 +227,7 @@ func decryptFile(
 	}
 	mode := cipher.NewCBCDecrypter(block, ivBytes)
 
-	tmpOutputFile, err := ioutil.TempFile(tmpDir, baseName(filename)+"#")
+	tmpOutputFile, err := os.CreateTemp(tmpDir, baseName(filename)+"#")
 	if err != nil {
 		return "", err
 	}
@@ -242,6 +244,10 @@ func decryptFile(
 		n, err := infile.Read(chunk)
 		if n == 0 || err != nil {
 			break
+		} else if n%aes.BlockSize != 0 {
+			// add padding to the end of the chunk and update the length n
+			chunk = padBytesLength(chunk[:n], aes.BlockSize)
+			n = len(chunk)
 		}
 		totalFileSize += n
 		chunk = chunk[:n]
@@ -285,9 +291,16 @@ func padBytesLength(src []byte, blockSize int) []byte {
 	return append(src, padText...)
 }
 
-func paddingTrim(src []byte) []byte {
+func paddingTrim(src []byte) ([]byte, error) {
 	unpadding := src[len(src)-1]
-	return src[:len(src)-int(unpadding)]
+	n := int(unpadding)
+	if n == 0 || n > len(src) {
+		return nil, &SnowflakeError{
+			Number:  ErrInvalidPadding,
+			Message: errMsgInvalidPadding,
+		}
+	}
+	return src[:len(src)-n], nil
 }
 
 func paddingOffset(src []byte) int {

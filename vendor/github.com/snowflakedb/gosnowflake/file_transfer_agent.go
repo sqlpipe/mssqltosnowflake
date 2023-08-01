@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math"
 	"net/url"
 	"os"
@@ -254,7 +253,7 @@ func (sfa *snowflakeFileTransferAgent) parseCommand() error {
 		if err != nil {
 			return err
 		}
-		if fi, err := os.Stat(sfa.localLocation); !fi.IsDir() || err != nil {
+		if fi, err := os.Stat(sfa.localLocation); err != nil || !fi.IsDir() {
 			return (&SnowflakeError{
 				Number:      ErrLocalPathNotDirectory,
 				SQLState:    sfa.data.SQLState,
@@ -467,7 +466,7 @@ func (sfa *snowflakeFileTransferAgent) processFileCompressionType() error {
 					if err != nil {
 						return err
 					}
-					ioutil.ReadAll(r) // flush out tee buffer
+					io.ReadAll(r) // flush out tee buffer
 				} else {
 					mtype, err = mimetype.DetectFile(fileName)
 					if err != nil {
@@ -616,6 +615,8 @@ func (sfa *snowflakeFileTransferAgent) transferAccelerateConfig() error {
 			if errors.As(err, &ae) {
 				if ae.ErrorCode() == "AccessDenied" {
 					return nil
+				} else if ae.ErrorCode() == "MethodNotAllowed" {
+					return nil
 				}
 			}
 			return err
@@ -654,9 +655,8 @@ func (sfa *snowflakeFileTransferAgent) getLocalFilePathFromCommand(command strin
 		}
 		filePathEndIdx = -1
 		if getMin(indexList) != -1 {
-			filePathEndIdx = getMin(indexList)
+			filePathEndIdx = filePathBeginIdx + getMin(indexList)
 		}
-
 		if filePathEndIdx > filePathBeginIdx {
 			filePath = command[filePathBeginIdx:filePathEndIdx]
 		} else {
@@ -682,11 +682,13 @@ func (sfa *snowflakeFileTransferAgent) upload(
 	}
 
 	if len(smallFileMetadata) > 0 {
+		logger.Infof("uploading %v small files", len(smallFileMetadata))
 		if err = sfa.uploadFilesParallel(smallFileMetadata); err != nil {
 			return err
 		}
 	}
 	if len(largeFileMetadata) > 0 {
+		logger.Infof("uploading %v large files", len(largeFileMetadata))
 		if err = sfa.uploadFilesSequential(largeFileMetadata); err != nil {
 			return err
 		}
@@ -743,6 +745,23 @@ func (sfa *snowflakeFileTransferAgent) uploadFilesParallel(fileMetas []*fileMeta
 				}(i, meta)
 			}
 			wg.Wait()
+
+			// append errors with no result associated to separate array
+			var errorMessages []string
+			for i, result := range results {
+				if result == nil {
+					if errors[i] == nil {
+						errorMessages = append(errorMessages, "unknown error")
+					} else {
+						errorMessages = append(errorMessages, errors[i].Error())
+					}
+				}
+			}
+			if errorMessages != nil {
+				// sort the error messages to be more deterministic as the goroutines may finish in different order each time
+				sort.Strings(errorMessages)
+				return fmt.Errorf("errors during file upload:\n%v", strings.Join(errorMessages, "\n"))
+			}
 
 			retryMeta := make([]*fileMetadata, 0)
 			for i, result := range results {
@@ -829,7 +848,7 @@ func (sfa *snowflakeFileTransferAgent) uploadFilesSequential(fileMetas []*fileMe
 
 func (sfa *snowflakeFileTransferAgent) uploadOneFile(meta *fileMetadata) (*fileMetadata, error) {
 	meta.realSrcFileName = meta.srcFileName
-	tmpDir, err := ioutil.TempDir("", "")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return nil, err
 	}
@@ -976,7 +995,7 @@ func (sfa *snowflakeFileTransferAgent) downloadFilesSequential(fileMetas []*file
 }
 
 func (sfa *snowflakeFileTransferAgent) downloadOneFile(meta *fileMetadata) (*fileMetadata, error) {
-	tmpDir, err := ioutil.TempDir("", "")
+	tmpDir, err := os.MkdirTemp("", "")
 	if err != nil {
 		return nil, err
 	}

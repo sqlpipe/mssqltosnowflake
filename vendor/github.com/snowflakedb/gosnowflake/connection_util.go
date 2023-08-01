@@ -14,7 +14,9 @@ import (
 )
 
 func (sc *snowflakeConn) isClientSessionKeepAliveEnabled() bool {
+	paramsMutex.Lock()
 	v, ok := sc.cfg.Params[sessionClientSessionKeepAlive]
+	paramsMutex.Unlock()
 	if !ok {
 		return false
 	}
@@ -22,24 +24,30 @@ func (sc *snowflakeConn) isClientSessionKeepAliveEnabled() bool {
 }
 
 func (sc *snowflakeConn) startHeartBeat() {
-	if !sc.isClientSessionKeepAliveEnabled() {
+	if sc.cfg != nil && !sc.isClientSessionKeepAliveEnabled() {
 		return
 	}
-	sc.rest.HeartBeat = &heartbeat{
-		restful: sc.rest,
+	if sc.rest != nil {
+		sc.rest.HeartBeat = &heartbeat{
+			restful: sc.rest,
+		}
+		sc.rest.HeartBeat.start()
 	}
-	sc.rest.HeartBeat.start()
 }
 
 func (sc *snowflakeConn) stopHeartBeat() {
-	if !sc.isClientSessionKeepAliveEnabled() {
+	if sc.cfg != nil && !sc.isClientSessionKeepAliveEnabled() {
 		return
 	}
-	sc.rest.HeartBeat.stop()
+	if sc.rest != nil {
+		sc.rest.HeartBeat.stop()
+	}
 }
 
 func (sc *snowflakeConn) getArrayBindStageThreshold() int {
+	paramsMutex.Lock()
 	v, ok := sc.cfg.Params[sessionArrayBindStageThreshold]
+	paramsMutex.Unlock()
 	if !ok {
 		return 0
 	}
@@ -60,9 +68,11 @@ func (sc *snowflakeConn) connectionTelemetry(cfg *Config) {
 		},
 		Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
 	}
+	paramsMutex.Lock()
 	for k, v := range cfg.Params {
 		data.Message[k] = *v
 	}
+	paramsMutex.Unlock()
 	sc.telemetry.addLog(data)
 	sc.telemetry.sendBatch()
 }
@@ -150,7 +160,9 @@ func (sc *snowflakeConn) populateSessionParameters(parameters []nameValueParamet
 			}
 		}
 		logger.Debugf("parameter. name: %v, value: %v", param.Name, v)
+		paramsMutex.Lock()
 		sc.cfg.Params[strings.ToLower(param.Name)] = &v
+		paramsMutex.Unlock()
 	}
 }
 
@@ -247,6 +259,7 @@ func populateChunkDownloader(
 	return &snowflakeChunkDownloader{
 		sc:                 sc,
 		ctx:                ctx,
+		pool:               getAllocator(ctx),
 		CurrentChunk:       make([]chunkRowType, len(data.RowSet)),
 		ChunkMetas:         data.Chunks,
 		Total:              data.Total,
